@@ -13,7 +13,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from scipy.stats import pearsonr
+# Remove scipy import - use numpy instead
+# from scipy.stats import pearsonr
 from pathlib import Path
 from collections import Counter
 
@@ -190,8 +191,14 @@ def get_statistical_summary(df):
     valid_data = df[['emotion_intensity', 'sentiment_polarity']].dropna()
     
     if len(valid_data) > 1:
-        corr, p_value = pearsonr(valid_data['emotion_intensity'], 
-                                 valid_data['sentiment_polarity'])
+        # Use numpy correlation instead of scipy
+        corr = np.corrcoef(valid_data['emotion_intensity'], 
+                          valid_data['sentiment_polarity'])[0, 1]
+        # Simple p-value approximation
+        n = len(valid_data)
+        t_stat = corr * np.sqrt(n - 2) / np.sqrt(1 - corr**2)
+        from math import erfc
+        p_value = erfc(abs(t_stat) / np.sqrt(2))
     else:
         corr, p_value = 0, 1.0
     
@@ -450,3 +457,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
