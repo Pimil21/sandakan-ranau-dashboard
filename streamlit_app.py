@@ -34,11 +34,9 @@ st.set_page_config(
 # ============================================================================
 
 class Config:
-    BASE_DIR = Path(".")  # Current directory for deployment
-    
-    # Data files (will be included in GitHub repo)
-    HYBRID_EMOTIONS = "D:/MASTERS_SEM_2/GES722-GEOSPATIAL_RESEARCH_PROJECT/data/trial 9/outputs/step5_emotion_analysis_hybrid/emotion_data/hybrid_emotion_analysis.csv"
-    LOCATION_EMOTIONS = "D:/MASTERS_SEM_2/GES722-GEOSPATIAL_RESEARCH_PROJECT/data/trial 9/outputs/step5_emotion_analysis_hybrid/emotion_data/location_emotions_hybrid.csv"
+    # Use relative paths for Streamlit Cloud deployment
+    HYBRID_EMOTIONS = "data/hybrid_emotion_analysis.csv"
+    LOCATION_EMOTIONS = "data/location_emotions_hybrid.csv"
 
 # ============================================================================
 # COLORS
@@ -457,4 +455,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
