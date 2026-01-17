@@ -3,7 +3,7 @@
 Statistical spatial analysis dashboard using hybrid emotion detection (BERT + Lexicon).
 
 ## 🚀 Live Dashboard
-[View Dashboard](https://your-app-name.streamlit.app) *(will be updated after deployment)*
+[View Dashboard](https://sandakan-ranau-emotion-dashboard.streamlit.app/) *(will be updated after deployment)*
 
 ## 📖 About
 This dashboard presents Research Objective 2 (RO2) analysis for the thesis:
@@ -26,3 +26,4 @@ GES722 Geospatial Research Project | Master's Degree | 2026
 
 ## 📊 Data Source
 Step 5 Hybrid Emotion Analysis from historical narrative texts
+
