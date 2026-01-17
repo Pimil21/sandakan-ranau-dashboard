@@ -25,14 +25,14 @@ class Config:
     LOCATION_EMOTIONS = "data/location_emotions_hybrid.csv"
     
     # Spatial data paths - POI files
-    POI_M1 = "spatial_data/POI_M1_3D.shp"
-    POI_M2 = "spatial_data/POI_M2_3D.shp"
-    POI_M3 = "spatial_data/POI_M3_3D.shp"
+    POI_M1 = "spatial-data/POI_M1_3D.shp"
+    POI_M2 = "spatial-data/POI_M2_3D.shp"
+    POI_M3 = "spatial-data/POI_M3_3D.shp"
     
     # Spatial data paths - Route files
-    ROUTE1 = "spatial_data/March1_Multipatch.shp"
-    ROUTE2 = "spatial_data/March2_Multipatch.shp"
-    ROUTE3 = "spatial_data/March3_Multipatch.shp"
+    ROUTE1 = "spatial-data/March1_Multipatch.shp"
+    ROUTE2 = "spatial-data/March2_Multipatch.shp"
+    ROUTE3 = "spatial-data/March3_Multipatch.shp"
 
 # ==================== DATA LOADING ====================
 @st.cache_data
@@ -535,3 +535,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
