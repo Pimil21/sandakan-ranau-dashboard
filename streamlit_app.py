@@ -9,6 +9,8 @@ import folium
 from streamlit_folium import st_folium
 from scipy import stats
 import branca.colormap as cm
+from shapely.geometry import Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon
+import fiona
 
 # ==================== PAGE CONFIG ====================
 st.set_page_config(
@@ -559,5 +561,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
