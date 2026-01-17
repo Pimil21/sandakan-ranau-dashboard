@@ -737,10 +737,10 @@ def main():
             SANDAKAN-RANAU DEATH MARCHES
         </h1>
         <h3 style="color: #D7CCC8; margin: 10px 0; font-weight: 400;">
-            Interactive 4D Geovisualization (X, Y, T + Emotion)
+            Interactive 2D Emotional and Sentiment Pattern Analysis Dashboard (X, Y + Emotion)
         </h3>
         <p style="color: #C3B091; font-style: italic; margin: 5px 0;">
-            Research Objective 3: Spatial-Temporal-Emotional Analysis
+            Research Objective 2: Spatial-Emotional-Sentiment Analysis Dashboard
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -883,4 +883,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
