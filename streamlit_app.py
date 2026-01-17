@@ -135,12 +135,15 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
             continue
         
         fg = folium.FeatureGroup(name=config['name'])
-        
+   
         for idx, row in route_gdf.iterrows():
             # Get death count for line thickness
             death_count = row.get('size_M1', 10)
+            # Handle NaN values
+        if pd.isna(death_count):
+            death_count = 0
             line_weight = max(3, min(death_count / 50, 12))
-            
+           
             # Popup content for routes
             route_popup_html = f"""
             <div style="font-family: Arial; width: 220px; padding: 10px;">
@@ -167,7 +170,7 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         
         fg.add_to(m)
     
-    # ========== ADD POI MARKERS ==========
+        # ========== ADD POI MARKERS ==========
     # Find location column name in emotion data
     location_col = find_location_column(emotion_df)
     
@@ -175,6 +178,11 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         poi_name = row['POI_Name']
         march_name = row['march_name']
         death_count = row.get('size_M1', 0)
+        
+        # Handle NaN values
+        if pd.isna(death_count):
+            death_count = 0
+        
         base_month = row.get('Base_month', 'Unknown')
         
         # Match with emotion data
@@ -544,3 +552,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
