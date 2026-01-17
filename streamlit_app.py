@@ -322,43 +322,228 @@ def create_avg_by_phase(df):
 # ============================================================================
 
 def main():
-    # Custom CSS
+    # WWII Historical Theme CSS
     st.markdown("""
     <style>
+    /* WWII Historical Color Palette */
+    :root {
+        --wwii-olive: #4A5D3F;
+        --wwii-khaki: #C3B091;
+        --wwii-brown: #3E2723;
+        --wwii-tan: #D7CCC8;
+        --wwii-gray: #5D4E37;
+        --wwii-red: #8B0000;
+        --wwii-gold: #B8860B;
+    }
+    
+    /* Main background - aged paper/military map */
+    .main {
+        background: linear-gradient(135deg, #E8DCC4 0%, #D4C5A9 50%, #C3B091 100%);
+    }
+    
+    /* Header - Military Style */
     .main-header {
         text-align: center;
-        padding: 20px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border-radius: 10px;
-        margin-bottom: 30px;
-    }
-    .info-box {
-        background: #f0f2f6;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #667eea;
-        margin-bottom: 20px;
-    }
-    .metric-card {
-        background: white;
-        padding: 15px;
+        padding: 25px;
+        background: linear-gradient(135deg, #3E2723 0%, #5D4E37 100%);
+        color: #E8DCC4;
         border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        text-align: center;
+        margin-bottom: 30px;
+        border: 3px solid #8B7355;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        font-family: 'Courier New', monospace;
+    }
+    
+    .main-header h1 {
+        color: #FFD700 !important;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        font-weight: bold;
+        letter-spacing: 1px;
+    }
+    
+    .main-header h3 {
+        color: #D7CCC8 !important;
+        font-weight: 400;
+    }
+    
+    .main-header p {
+        color: #C3B091 !important;
+        font-style: italic;
+    }
+    
+    /* Info Box - Military Briefing Style */
+    .info-box {
+        background: linear-gradient(135deg, #4A5D3F 0%, #5D4E37 100%);
+        padding: 25px;
+        border-radius: 8px;
+        border-left: 6px solid #8B0000;
+        border-right: 2px solid #8B7355;
+        margin-bottom: 25px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+        color: #E8DCC4;
+    }
+    
+    .info-box h4 {
+        color: #FFD700 !important;
+        margin-bottom: 15px;
+        font-weight: bold;
+        font-family: 'Courier New', monospace;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+    }
+    
+    .info-box p {
+        color: #E8DCC4 !important;
+        line-height: 1.6;
+    }
+    
+    .info-box strong {
+        color: #FFD700 !important;
+    }
+    
+    /* Metric Cards - War Report Style */
+    .stMetric {
+        background: linear-gradient(135deg, #2C1810 0%, #3E2723 100%) !important;
+        padding: 20px !important;
+        border-radius: 8px !important;
+        border: 2px solid #8B7355 !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4) !important;
+    }
+    
+    .stMetric label {
+        color: #D7CCC8 !important;
+        font-weight: bold !important;
+        font-size: 14px !important;
+        font-family: 'Courier New', monospace !important;
+    }
+    
+    .stMetric [data-testid="stMetricValue"] {
+        color: #FFD700 !important;
+        font-size: 28px !important;
+        font-weight: bold !important;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+    }
+    
+    /* Sidebar - Command Post Style */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #3E2723 0%, #2C1810 100%);
+        border-right: 3px solid #8B7355;
+    }
+    
+    section[data-testid="stSidebar"] * {
+        color: #E8DCC4 !important;
+    }
+    
+    /* Charts - Darker background for visibility */
+    .js-plotly-plot {
+        background: rgba(255, 255, 255, 0.95) !important;
+        border-radius: 8px;
+        border: 2px solid #8B7355;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    
+    /* Markdown Tables */
+    table {
+        background: #2C1810 !important;
+        color: #E8DCC4 !important;
+        border: 2px solid #8B7355 !important;
+    }
+    
+    table th {
+        background: #3E2723 !important;
+        color: #FFD700 !important;
+        font-family: 'Courier New', monospace !important;
+        font-weight: bold !important;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    table td {
+        color: #E8DCC4 !important;
+        border-color: #5D4E37 !important;
+    }
+    
+    /* Horizontal Rule - Military Division */
+    hr {
+        border: none;
+        height: 3px;
+        background: linear-gradient(90deg, 
+            transparent 0%, 
+            #8B0000 20%, 
+            #FFD700 50%, 
+            #8B0000 80%, 
+            transparent 100%);
+        margin: 30px 0;
+    }
+    
+    /* Text Colors for White Boxes */
+    .element-container {
+        color: #2C1810 !important;
+    }
+    
+    /* Fix white text in white boxes */
+    div[data-testid="stMarkdownContainer"] p {
+        color: #2C1810 !important;
+    }
+    
+    /* Headers in content */
+    h1, h2, h3, h4, h5, h6 {
+        color: #3E2723 !important;
+        font-family: 'Courier New', monospace !important;
+    }
+    
+    /* Buttons - Military Style */
+    .stButton button {
+        background: linear-gradient(135deg, #4A5D3F 0%, #5D4E37 100%);
+        color: #FFD700 !important;
+        border: 2px solid #8B7355;
+        font-weight: bold;
+        font-family: 'Courier New', monospace;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .stButton button:hover {
+        background: linear-gradient(135deg, #5D4E37 0%, #4A5D3F 100%);
+        border-color: #FFD700;
+    }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+        width: 12px;
+        background: #2C1810;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: #5D4E37;
+        border: 2px solid #8B7355;
+        border-radius: 6px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: #4A5D3F;
+    }
+    
+    /* Footer styling */
+    footer {
+        background: #2C1810;
+        color: #C3B091 !important;
+        border-top: 3px solid #8B7355;
+        padding: 20px;
+        font-family: 'Courier New', monospace;
     }
     </style>
     """, unsafe_allow_html=True)
-    
+
     # Header
     st.markdown("""
     <div class="main-header">
-        <h1>📊 Statistical Spatial Analysis: Sandakan-Ranau Death Marches</h1>
-        <h3>Enhanced with Hybrid Emotion Detection (BERT + Lexicon)</h3>
-        <p>Research Objective 2: Analyze spatial-temporal sentiment patterns</p>
+        <h1>🎖️ STATISTICAL SPATIAL ANALYSIS: SANDAKAN-RANAU DEATH MARCHES 🎖️</h1>
+        <h3>⚔️ Enhanced with Hybrid Emotion Detection (BERT + Lexicon) ⚔️</h3>
+        <p>🗺️ Research Objective 2: Analyze spatial-temporal sentiment patterns during WWII Pacific Theater operations</p>
     </div>
     """, unsafe_allow_html=True)
-    
+
     # Load data
     with st.spinner('Loading emotion analysis data...'):
         df = load_data()
@@ -373,9 +558,11 @@ def main():
     # Info box
     st.markdown("""
     <div class="info-box">
-        <h4>🔬 Methodology & Dataset</h4>
-        <p><strong>Data Source:</strong> Step 5 Hybrid Emotion Analysis (BERT Transformer + Lexicon-based detection)</p>
-        <p><strong>Improvement:</strong> 1,831 emotions detected (417% increase over lexicon-only approach)</p>
+        <h4>📋 Intelligence Report: Methodology & Dataset</h4>
+        <p><strong>🔍 Data Source:</strong> Step 5 Hybrid Emotion Analysis (BERT Transformer + Lexicon-based detection)</p>
+        <p><strong>🤖 Detection Method:</strong> Advanced NLP with 417% improvement over traditional approaches</p>
+        <p><strong>📊 Intelligence Gathered:</strong> 1,831 emotions detected across 174 geographic locations</p>
+        <p><strong>⚠️ Historical Period:</strong> January - June 1945 | Borneo Campaign | WWII Pacific Theater</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -455,5 +642,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
