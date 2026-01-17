@@ -88,17 +88,167 @@ def load_spatial_data():
         st.code(traceback.format_exc())
         return None, None, None, None
 
-# ==================== HELPER FUNCTIONS ====================
-def find_location_column(df):
-    """Find the location column name in DataFrame"""
-    possible_names = ['location', 'Location', 'poi_name', 'POI_Name', 'place', 'Place', 'name', 'Name']
-    for col_name in possible_names:
-        if col_name in df.columns:
-            return col_name
-    return None
+# ==================== SMART COLUMN DETECTION ====================
+@st.cache_data
+def analyze_data_structure(emotion_df, poi_gdf):
+    """
+    Automatically analyze data structure and identify matching columns
+    Returns a mapping dictionary for column names
+    """
+    analysis_results = {
+        'emotion_columns': list(emotion_df.columns),
+        'spatial_columns': list(poi_gdf.columns),
+        'location_column': None,
+        'poi_name_column': None,
+        'death_count_column': None,
+        'emotion_score_columns': [],
+        'sentiment_column': None,
+        'temporal_column': None,
+        'sample_locations': []
+    }
+    
+    # 1. Find POI name column in spatial data
+    poi_name_candidates = ['POI_Name', 'poi_name', 'name', 'Name', 'location_name', 'place_name']
+    for col in poi_name_candidates:
+        if col in poi_gdf.columns:
+            analysis_results['poi_name_column'] = col
+            # Get sample location names
+            analysis_results['sample_locations'] = poi_gdf[col].dropna().unique()[:5].tolist()
+            break
+    
+    # 2. Find death count column in spatial data
+    death_count_candidates = ['size_M1', 'deaths', 'death_count', 'casualties', 'pow_deaths']
+    for col in death_count_candidates:
+        if col in poi_gdf.columns:
+            analysis_results['death_count_column'] = col
+            break
+    
+    # 3. Find location column in emotion data (smart matching)
+    location_candidates = [
+        'location', 'Location', 'poi_name', 'POI_Name', 'place', 'Place',
+        'name', 'Name', 'entity_text', 'text', 'entity', 'named_entity',
+        'location_text', 'location_name', 'place_name'
+    ]
+    
+    # First: Try exact matches
+    for col in location_candidates:
+        if col in emotion_df.columns:
+            analysis_results['location_column'] = col
+            break
+    
+    # Second: Try fuzzy matching - find any column containing location-like text
+    if analysis_results['location_column'] is None:
+        for col in emotion_df.columns:
+            col_lower = col.lower()
+            if any(keyword in col_lower for keyword in ['location', 'place', 'poi', 'entity', 'site']):
+                # Verify it contains text data
+                if emotion_df[col].dtype == 'object':
+                    analysis_results['location_column'] = col
+                    break
+    
+    # Third: Smart content-based detection
+    if analysis_results['location_column'] is None and len(analysis_results['sample_locations']) > 0:
+        # Check which column contains the most matches with POI names
+        sample_poi = analysis_results['sample_locations'][0].split()[0]  # First word of first location
+        
+        for col in emotion_df.columns:
+            if emotion_df[col].dtype == 'object':
+                # Check if this column contains location names
+                try:
+                    matches = emotion_df[col].str.contains(sample_poi, case=False, na=False).sum()
+                    if matches > 0:
+                        analysis_results['location_column'] = col
+                        break
+                except:
+                    continue
+    
+    # 4. Find emotion score columns
+    emotion_keywords = ['anger', 'fear', 'sadness', 'joy', 'surprise', 'disgust', 
+                       'neutral', 'hunger', 'despair', 'cruelty', 'emotion']
+    for col in emotion_df.columns:
+        if any(keyword in col.lower() for keyword in emotion_keywords):
+            # Check if it's numeric
+            if pd.api.types.is_numeric_dtype(emotion_df[col]):
+                analysis_results['emotion_score_columns'].append(col)
+    
+    # 5. Find sentiment column
+    sentiment_candidates = ['sentiment', 'sentiment_score', 'sentiment_value', 'polarity']
+    for col in sentiment_candidates:
+        if col in emotion_df.columns:
+            if pd.api.types.is_numeric_dtype(emotion_df[col]):
+                analysis_results['sentiment_column'] = col
+                break
+    
+    # 6. Find temporal column
+    temporal_candidates = ['march_phase', 'date', 'time', 'period', 'phase', 'month', 'day']
+    for col in temporal_candidates:
+        if col in emotion_df.columns:
+            analysis_results['temporal_column'] = col
+            break
+    
+    return analysis_results
+
+def display_data_analysis(analysis_results):
+    """Display the automatic data structure analysis results"""
+    with st.expander("🔍 Auto-Detected Data Structure", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📊 Emotion Data")
+            st.write(f"**Total columns:** {len(analysis_results['emotion_columns'])}")
+            st.write(f"**Location column:** `{analysis_results['location_column']}`")
+            st.write(f"**Sentiment column:** `{analysis_results['sentiment_column']}`")
+            st.write(f"**Temporal column:** `{analysis_results['temporal_column']}`")
+            st.write(f"**Emotion columns:** {len(analysis_results['emotion_score_columns'])}")
+            if analysis_results['emotion_score_columns']:
+                st.code(", ".join(analysis_results['emotion_score_columns'][:5]))
+        
+        with col2:
+            st.markdown("### 🗺️ Spatial Data")
+            st.write(f"**Total columns:** {len(analysis_results['spatial_columns'])}")
+            st.write(f"**POI name column:** `{analysis_results['poi_name_column']}`")
+            st.write(f"**Death count column:** `{analysis_results['death_count_column']}`")
+            st.write(f"**Sample locations:**")
+            if analysis_results['sample_locations']:
+                for loc in analysis_results['sample_locations']:
+                    st.write(f"  • {loc}")
+        
+        # Show all columns
+        with st.expander("📋 All Columns Detail"):
+            st.write("**Emotion CSV columns:**")
+            st.code(", ".join(analysis_results['emotion_columns']))
+            st.write("**Spatial shapefile columns:**")
+            st.code(", ".join(analysis_results['spatial_columns']))
+
+# ==================== SMART HELPER FUNCTIONS ====================
+def find_location_column(df, column_mapping):
+    """Find the location column using smart mapping"""
+    return column_mapping.get('location_column', None)
+
+def safe_get_value(row, column_name, default=0, as_type='int'):
+    """Safely get value from row with NaN handling"""
+    value = row.get(column_name, default)
+    
+    if pd.isna(value):
+        return default
+    
+    if as_type == 'int':
+        try:
+            return int(value)
+        except:
+            return default
+    elif as_type == 'str':
+        return str(value)
+    elif as_type == 'float':
+        try:
+            return float(value)
+        except:
+            return default
+    else:
+        return value
 
 # ==================== MAP CREATION ====================
-def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_df):
+def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_df, column_mapping):
     """Create Folium map with POI, routes, and synchronized emotions"""
     
     # Calculate map center
@@ -129,30 +279,31 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         {'gdf': route3_gdf, 'color': '#B22222', 'name': 'Third March (Jun 1945)'}
     ]
     
+    poi_name_col = column_mapping['poi_name_column']
+    death_count_col = column_mapping['death_count_column']
+    
     for config in route_configs:
         route_gdf = config['gdf']
         if route_gdf is None or route_gdf.empty:
             continue
         
         fg = folium.FeatureGroup(name=config['name'])
-   
+        
         for idx, row in route_gdf.iterrows():
             # Get death count for line thickness
-            death_count = row.get('size_M1', 10)
-            # Handle NaN values
-        if pd.isna(death_count):
-            death_count = 0
+            death_count = safe_get_value(row, death_count_col, default=0, as_type='int')
             line_weight = max(3, min(death_count / 50, 12))
-           
+            
+            poi_name = safe_get_value(row, poi_name_col, default='Unknown', as_type='str')
+            
             # Popup content for routes
             route_popup_html = f"""
             <div style="font-family: Arial; width: 220px; padding: 10px;">
                 <h4 style="color: #8B0000; margin: 0 0 8px 0;">{config['name']}</h4>
-                <p style="margin: 4px 0;"><strong>Location:</strong> {row.get('POI_Name', 'Unknown')}</p>
-                <p style="margin: 4px 0;"><strong>Deaths:</strong> {int(death_count)} POWs</p>
-                <p style="margin: 4px 0;"><strong>Month:</strong> {row.get('Base_month', 'N/A')}</p>
-                <p style="margin: 4px 0;"><strong>Segment:</strong> {row.get('segment', 'N/A')}</p>
-                <p style="margin: 4px 0;"><strong>Days:</strong> {row.get('Start_day', '?')}-{row.get('End_day', '?')}</p>
+                <p style="margin: 4px 0;"><strong>Location:</strong> {poi_name}</p>
+                <p style="margin: 4px 0;"><strong>Deaths:</strong> {death_count} POWs</p>
+                <p style="margin: 4px 0;"><strong>Month:</strong> {safe_get_value(row, 'Base_month', 'N/A', 'str')}</p>
+                <p style="margin: 4px 0;"><strong>Segment:</strong> {safe_get_value(row, 'segment', 'N/A', 'str')}</p>
             </div>
             """
             
@@ -165,41 +316,36 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
                     'opacity': 0.8
                 },
                 popup=folium.Popup(route_popup_html, max_width=250),
-                tooltip=row.get('POI_Name', 'Route segment')
+                tooltip=poi_name
             ).add_to(fg)
         
         fg.add_to(m)
     
-        # ========== ADD POI MARKERS ==========
-    # Find location column name in emotion data
-    location_col = find_location_column(emotion_df)
+    # ========== ADD POI MARKERS ==========
+    # Get location column from smart mapping
+    location_col = column_mapping['location_column']
+    emotion_cols = column_mapping['emotion_score_columns']
     
     for idx, row in poi_gdf.iterrows():
-        poi_name = row['POI_Name']
-        march_name = row['march_name']
-        death_count = row.get('size_M1', 0) if pd.notna(row.get('size_M1')) else 0
-        
-        # Handle NaN values
-        if pd.isna(death_count):
-            death_count = 0
-        
-        base_month = row.get('Base_month', 'Unknown')
+        poi_name = safe_get_value(row, poi_name_col, default='Unknown', as_type='str')
+        march_name = safe_get_value(row, 'march_name', default='Unknown March', as_type='str')
+        death_count = safe_get_value(row, death_count_col, default=0, as_type='int')
+        base_month = safe_get_value(row, 'Base_month', default='Unknown', as_type='str')
         
         # Match with emotion data
         location_emotions = pd.DataFrame()
-        if location_col:
+        if location_col and location_col in emotion_df.columns:
             try:
                 # Try to match location name (fuzzy matching by first word)
+                search_term = poi_name.split()[0] if poi_name != 'Unknown' else poi_name
                 location_emotions = emotion_df[
-                    emotion_df[location_col].str.contains(poi_name.split()[0], case=False, na=False)
+                    emotion_df[location_col].str.contains(search_term, case=False, na=False)
                 ]
             except Exception as e:
                 location_emotions = pd.DataFrame()
         
         # Determine dominant emotion and marker color
-        if not location_emotions.empty:
-            emotion_cols = ['anger', 'fear', 'sadness', 'joy', 'surprise', 'disgust', 'neutral', 
-                          'hunger', 'despair', 'cruelty']
+        if not location_emotions.empty and emotion_cols:
             available_cols = [col for col in emotion_cols if col in location_emotions.columns]
             
             if available_cols:
@@ -208,18 +354,18 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
                 total_emotions = len(location_emotions)
                 
                 emotion_colors = {
-                    'anger': 'red',
-                    'fear': 'darkpurple',
-                    'sadness': 'blue',
-                    'joy': 'green',
-                    'surprise': 'orange',
-                    'disgust': 'darkred',
-                    'neutral': 'gray',
-                    'hunger': 'lightred',
-                    'despair': 'black',
+                    'anger': 'red', 'fear': 'darkpurple', 'sadness': 'blue',
+                    'joy': 'green', 'surprise': 'orange', 'disgust': 'darkred',
+                    'neutral': 'gray', 'hunger': 'lightred', 'despair': 'black',
                     'cruelty': 'purple'
                 }
-                marker_color = emotion_colors.get(dominant_emotion, 'gray')
+                
+                # Match color by emotion name
+                marker_color = 'gray'
+                for emotion_key in emotion_colors.keys():
+                    if emotion_key in dominant_emotion.lower():
+                        marker_color = emotion_colors[emotion_key]
+                        break
             else:
                 dominant_emotion = 'unknown'
                 total_emotions = len(location_emotions)
@@ -231,20 +377,21 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         
         # Icon by march phase
         icon_map = {1: 'star', 2: 'flag', 3: 'certificate'}
-        icon = icon_map.get(row['march_id'], 'info-sign')
+        march_id = safe_get_value(row, 'march_id', default=1, as_type='int')
+        icon = icon_map.get(march_id, 'info-sign')
         
-        # Create popup - simplified without problematic emojis
+        # Create popup
         popup_html = f"""
         <div style="font-family: Arial; width: 240px; padding: 10px; background: #f5f5f5; border: 2px solid #8B7355; border-radius: 5px;">
             <h4 style="margin: 0 0 8px 0; color: #3E2723; border-bottom: 2px solid #8B0000;">{poi_name}</h4>
             
             <div style="background: #4A5D3F; color: white; padding: 6px; margin: 6px 0; border-radius: 3px;">
                 <strong>{march_name}</strong><br>
-                Month: {base_month} | Segment: {row.get('segment', 'N/A')}
+                Month: {base_month} | Segment: {safe_get_value(row, 'segment', 'N/A', 'str')}
             </div>
             
             <div style="background: #2C1810; color: #FFD700; padding: 6px; margin: 6px 0; border-radius: 3px;">
-                <strong>POW Deaths:</strong> {int(death_count)}<br>
+                <strong>POW Deaths:</strong> {death_count}<br>
                 <strong>Emotions:</strong> {total_emotions} records<br>
                 <strong>Dominant:</strong> {dominant_emotion.upper()}
             </div>
@@ -261,7 +408,7 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         folium.Marker(
             location=[row.geometry.y, row.geometry.x],
             popup=folium.Popup(popup_html, max_width=300),
-            tooltip=f"{poi_name} ({march_name}) - {int(death_count)} deaths",
+            tooltip=f"{poi_name} ({march_name}) - {death_count} deaths",
             icon=folium.Icon(color=marker_color, icon=icon, prefix='glyphicon')
         ).add_to(m)
     
@@ -298,54 +445,51 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
     return m
 
 # ==================== ANALYSIS FUNCTIONS ====================
-def analyze_location_emotions(location_name, hybrid_df, poi_row):
+def analyze_location_emotions(location_name, hybrid_df, poi_row, column_mapping):
     """Analyze emotions for selected location"""
     
-    # Find location column
-    location_col = find_location_column(hybrid_df)
+    # Get location column from mapping
+    location_col = column_mapping['location_column']
+    emotion_cols = column_mapping['emotion_score_columns']
+    sentiment_col = column_mapping['sentiment_column']
+    temporal_col = column_mapping['temporal_column']
     
-    if location_col is None:
-        st.error(f"⚠️ No location column found in emotion data. Available columns: {hybrid_df.columns.tolist()}")
+    if location_col is None or location_col not in hybrid_df.columns:
         return None
     
     # Try to match location name (fuzzy matching)
     try:
+        search_term = location_name.split()[0]
         location_data = hybrid_df[
-            hybrid_df[location_col].str.contains(location_name.split()[0], case=False, na=False)
+            hybrid_df[location_col].str.contains(search_term, case=False, na=False)
         ]
     except Exception as e:
-        st.error(f"Error matching location: {str(e)}")
         return None
     
     if location_data.empty:
         return None
     
-    # Get emotion columns
-    emotion_cols = [col for col in ['anger', 'fear', 'sadness', 'joy', 'surprise', 
-                                     'disgust', 'neutral', 'hunger', 'despair', 'cruelty'] 
-                    if col in location_data.columns]
-    
     if not emotion_cols:
-        st.warning("No emotion columns found in data")
         return None
     
     # Calculate statistics
-    emotion_counts = location_data[emotion_cols].sum().sort_values(ascending=False)
+    available_emotion_cols = [col for col in emotion_cols if col in location_data.columns]
+    if not available_emotion_cols:
+        return None
+    
+    emotion_counts = location_data[available_emotion_cols].sum().sort_values(ascending=False)
     
     # Temporal analysis if available
-    temporal_col = None
-    if 'march_phase' in location_data.columns:
-        temporal_col = 'march_phase'
-    elif 'date' in location_data.columns:
-        temporal_col = 'date'
-    
     temporal_emotions = None
-    if temporal_col:
-        temporal_emotions = location_data.groupby(temporal_col)[emotion_cols].sum()
+    if temporal_col and temporal_col in location_data.columns:
+        temporal_emotions = location_data.groupby(temporal_col)[available_emotion_cols].sum()
     
     # Sentiment statistics
-    avg_sentiment = location_data['sentiment_score'].mean() if 'sentiment_score' in location_data.columns else None
-    sentiment_std = location_data['sentiment_score'].std() if 'sentiment_score' in location_data.columns else None
+    avg_sentiment = None
+    sentiment_std = None
+    if sentiment_col and sentiment_col in location_data.columns:
+        avg_sentiment = location_data[sentiment_col].mean()
+        sentiment_std = location_data[sentiment_col].std()
     
     return {
         'total_records': len(location_data),
@@ -357,15 +501,18 @@ def analyze_location_emotions(location_name, hybrid_df, poi_row):
         'poi_info': poi_row
     }
 
-def create_location_charts(analysis_results):
+def create_location_charts(analysis_results, column_mapping):
     """Create Plotly charts for selected location"""
     charts = []
+    
+    poi_name_col = column_mapping['poi_name_column']
+    poi_name = safe_get_value(analysis_results['poi_info'], poi_name_col, 'Location', 'str')
     
     # 1. Emotion Distribution Pie Chart
     fig_pie = px.pie(
         values=analysis_results['emotion_counts'].values,
         names=analysis_results['emotion_counts'].index,
-        title=f"Emotion Distribution - {analysis_results['poi_info']['POI_Name']}",
+        title=f"Emotion Distribution - {poi_name}",
         color_discrete_sequence=px.colors.qualitative.Bold,
         hole=0.3
     )
@@ -398,28 +545,30 @@ def create_location_charts(analysis_results):
     
     # 4. Sentiment Distribution
     if analysis_results['avg_sentiment'] is not None:
-        fig_sent = go.Figure()
-        fig_sent.add_trace(go.Histogram(
-            x=analysis_results['data']['sentiment_score'],
-            nbinsx=25,
-            name='Sentiment Distribution',
-            marker_color='indianred'
-        ))
-        fig_sent.add_vline(
-            x=analysis_results['avg_sentiment'],
-            line_dash="dash",
-            line_color="darkred",
-            annotation_text=f"Mean: {analysis_results['avg_sentiment']:.3f}",
-            annotation_position="top"
-        )
-        fig_sent.update_layout(
-            title="Sentiment Score Distribution",
-            xaxis_title="Sentiment Score",
-            yaxis_title="Frequency",
-            showlegend=False,
-            height=350
-        )
-        charts.append(fig_sent)
+        sentiment_col = column_mapping['sentiment_column']
+        if sentiment_col in analysis_results['data'].columns:
+            fig_sent = go.Figure()
+            fig_sent.add_trace(go.Histogram(
+                x=analysis_results['data'][sentiment_col],
+                nbinsx=25,
+                name='Sentiment Distribution',
+                marker_color='indianred'
+            ))
+            fig_sent.add_vline(
+                x=analysis_results['avg_sentiment'],
+                line_dash="dash",
+                line_color="darkred",
+                annotation_text=f"Mean: {analysis_results['avg_sentiment']:.3f}",
+                annotation_position="top"
+            )
+            fig_sent.update_layout(
+                title="Sentiment Score Distribution",
+                xaxis_title="Sentiment Score",
+                yaxis_title="Frequency",
+                showlegend=False,
+                height=350
+            )
+            charts.append(fig_sent)
     
     return charts
 
@@ -444,7 +593,7 @@ def main():
     """, unsafe_allow_html=True)
     
     # Load data
-    with st.spinner("Loading emotion data and spatial layers..."):
+    with st.spinner("🔄 Loading emotion data and spatial layers..."):
         hybrid_df, location_df = load_data()
         poi_gdf, route1_gdf, route2_gdf, route3_gdf = load_spatial_data()
     
@@ -452,6 +601,20 @@ def main():
     if poi_gdf is None or hybrid_df is None:
         st.error("⚠️ Failed to load required data. Please check file paths and data integrity.")
         st.stop()
+    
+    # ========== SMART AUTO-DETECTION ==========
+    with st.spinner("🧠 Analyzing data structure and auto-detecting columns..."):
+        column_mapping = analyze_data_structure(hybrid_df, poi_gdf)
+    
+    # Display detection results
+    display_data_analysis(column_mapping)
+    
+    # Warning if critical columns not found
+    if column_mapping['location_column'] is None:
+        st.warning("⚠️ **No location column auto-detected in emotion data.** Emotion analysis will be limited.")
+    
+    if not column_mapping['emotion_score_columns']:
+        st.warning("⚠️ **No emotion score columns detected.** Emotion visualization will be unavailable.")
     
     # Create two-column layout
     col_map, col_analysis = st.columns([1.3, 1])
@@ -462,7 +625,7 @@ def main():
         
         # Create and display map
         death_march_map = create_interactive_map(
-            poi_gdf, route1_gdf, route2_gdf, route3_gdf, hybrid_df
+            poi_gdf, route1_gdf, route2_gdf, route3_gdf, hybrid_df, column_mapping
         )
         
         # Display map with interaction tracking
@@ -480,13 +643,15 @@ def main():
             clicked_point = Point(coords['lng'], coords['lat'])
             distances = poi_gdf.geometry.distance(clicked_point)
             nearest_idx = distances.idxmin()
-            clicked_location = poi_gdf.iloc[nearest_idx]['POI_Name']
+            poi_name_col = column_mapping['poi_name_column']
+            clicked_location = poi_gdf.iloc[nearest_idx][poi_name_col]
     
     with col_analysis:
         st.subheader("📊 Location-Specific Emotion Analysis")
         
         # Location selector with map synchronization
-        location_options = sorted(poi_gdf['POI_Name'].unique())
+        poi_name_col = column_mapping['poi_name_column']
+        location_options = sorted(poi_gdf[poi_name_col].unique())
         default_idx = 0
         
         if clicked_location and clicked_location in location_options:
@@ -501,19 +666,24 @@ def main():
         
         if selected_location:
             # Get POI information
-            poi_row = poi_gdf[poi_gdf['POI_Name'] == selected_location].iloc[0]
+            poi_row = poi_gdf[poi_gdf[poi_name_col] == selected_location].iloc[0]
             
-            # Display key metrics
+            # Display key metrics with safe value extraction
+            death_count_col = column_mapping['death_count_column']
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Deaths", int(poi_row.get('size_M1', 0)))
+                death_value = safe_get_value(poi_row, death_count_col, 0, 'int')
+                st.metric("Deaths", death_value)
             with col2:
-                st.metric("Month", poi_row.get('Base_month', 'N/A'))
+                month_value = safe_get_value(poi_row, 'Base_month', 'N/A', 'str')
+                st.metric("Month", month_value)
             with col3:
-                st.metric("March", poi_row['march_name'].replace(' March', ''))
+                march_name = safe_get_value(poi_row, 'march_name', 'Unknown', 'str')
+                march_name = march_name.replace(' March', '')
+                st.metric("March", march_name)
             
             # Analyze emotions for location
-            analysis = analyze_location_emotions(selected_location, hybrid_df, poi_row)
+            analysis = analyze_location_emotions(selected_location, hybrid_df, poi_row, column_mapping)
             
             if analysis and analysis['total_records'] > 0:
                 # Display emotion statistics
@@ -526,18 +696,24 @@ def main():
                 
                 # Display charts
                 st.markdown("---")
-                charts = create_location_charts(analysis)
+                charts = create_location_charts(analysis, column_mapping)
                 for chart in charts:
                     st.plotly_chart(chart, use_container_width=True)
                 
                 # Raw data expander
                 with st.expander("📄 View Raw Emotion Data"):
-                    display_cols = ['sentence', 'dominant_emotion', 'sentiment_score']
-                    available_display_cols = [col for col in display_cols if col in analysis['data'].columns]
+                    # Try to display most relevant columns
+                    display_cols = []
+                    potential_cols = ['sentence', 'text', 'dominant_emotion', 'emotion', 
+                                     column_mapping['sentiment_column'], column_mapping['location_column']]
                     
-                    if available_display_cols:
+                    for col in potential_cols:
+                        if col and col in analysis['data'].columns:
+                            display_cols.append(col)
+                    
+                    if display_cols:
                         st.dataframe(
-                            analysis['data'][available_display_cols].head(20),
+                            analysis['data'][display_cols].head(20),
                             use_container_width=True
                         )
                     else:
@@ -552,5 +728,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
