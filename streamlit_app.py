@@ -10,6 +10,8 @@ from streamlit_folium import st_folium
 from scipy import stats
 import branca.colormap as cm
 from shapely.geometry import Point
+import ast
+import re
 
 # ==================== PAGE CONFIG ====================
 st.set_page_config(
@@ -89,74 +91,119 @@ def load_spatial_data():
         return None, None, None, None
 
 # ==================== SMART COLUMN DETECTION ====================
-# Light-weight cached version (column names only)
-@st.cache_data
-def get_column_mappings(emotion_cols, spatial_cols):
-    """Cached mapping logic using only column names"""
-    mapping = {
-        'emotion_columns': emotion_cols,
-        'spatial_columns': spatial_cols,
+def analyze_data_structure(emotion_df, poi_gdf):
+    """
+    Automatically analyze data structure and identify matching columns
+    Returns a mapping dictionary for column names
+    NOTE: Not cached because it accepts GeoDataFrame (unhashable)
+    """
+    analysis_results = {
+        'emotion_columns': list(emotion_df.columns),
+        'spatial_columns': list(poi_gdf.columns),
         'location_column': None,
         'poi_name_column': None,
         'death_count_column': None,
         'emotion_score_columns': [],
         'sentiment_column': None,
-        'temporal_column': None
+        'temporal_column': None,
+        'sample_locations': [],
+        'emotion_format': 'unknown'  # 'numeric' or 'dictionary'
     }
     
-    # POI name detection
-    for col in ['POI_Name', 'poi_name', 'name', 'Name']:
-        if col in spatial_cols:
-            mapping['poi_name_column'] = col
+    # 1. Find POI name column in spatial data
+    poi_name_candidates = ['POI_Name', 'poi_name', 'name', 'Name', 'location_name', 'place_name']
+    for col in poi_name_candidates:
+        if col in poi_gdf.columns:
+            analysis_results['poi_name_column'] = col
+            # Get sample location names
+            analysis_results['sample_locations'] = poi_gdf[col].dropna().unique()[:5].tolist()
             break
     
-    # Death count detection
-    for col in ['size_M1', 'deaths', 'death_count']:
-        if col in spatial_cols:
-            mapping['death_count_column'] = col
+    # 2. Find death count column in spatial data
+    death_count_candidates = ['size_M1', 'deaths', 'death_count', 'casualties', 'pow_deaths']
+    for col in death_count_candidates:
+        if col in poi_gdf.columns:
+            analysis_results['death_count_column'] = col
             break
     
-    # Location column detection
-    for col in ['location', 'Location', 'entity_text', 'poi_name']:
-        if col in emotion_cols:
-            mapping['location_column'] = col
+    # 3. Find location column in emotion data (smart matching)
+    location_candidates = [
+        'location_name', 'entity_text', 'location', 'Location', 'poi_name', 'POI_Name', 
+        'place', 'Place', 'name', 'Name', 'entity', 'named_entity', 'location_text', 'place_name'
+    ]
+    
+    # First: Try exact matches
+    for col in location_candidates:
+        if col in emotion_df.columns:
+            analysis_results['location_column'] = col
             break
     
-    # Emotion columns
-    for col in emotion_cols:
-        if any(kw in col.lower() for kw in ['anger', 'fear', 'sadness', 'joy']):
-            mapping['emotion_score_columns'].append(col)
+    # Second: Try fuzzy matching
+    if analysis_results['location_column'] is None:
+        for col in emotion_df.columns:
+            col_lower = col.lower()
+            if any(keyword in col_lower for keyword in ['location', 'place', 'poi', 'entity', 'site']):
+                if emotion_df[col].dtype == 'object':
+                    analysis_results['location_column'] = col
+                    break
     
-    # Sentiment column
-    for col in ['sentiment', 'sentiment_score']:
-        if col in emotion_cols:
-            mapping['sentiment_column'] = col
+    # Third: Smart content-based detection
+    if analysis_results['location_column'] is None and len(analysis_results['sample_locations']) > 0:
+        sample_poi = analysis_results['sample_locations'][0].split()[0]
+        
+        for col in emotion_df.columns:
+            if emotion_df[col].dtype == 'object':
+                try:
+                    matches = emotion_df[col].str.contains(sample_poi, case=False, na=False).sum()
+                    if matches > 0:
+                        analysis_results['location_column'] = col
+                        break
+                except:
+                    continue
+    
+    # 4. Find emotion score columns - Enhanced for dictionary format
+    emotion_score_columns = []
+    
+    # First: Check for traditional numeric emotion columns
+    emotion_keywords = ['anger', 'fear', 'sadness', 'joy', 'surprise', 'disgust', 
+                       'neutral', 'hunger', 'despair', 'cruelty']
+    
+    for col in emotion_df.columns:
+        if any(keyword in col.lower() for keyword in emotion_keywords):
+            if pd.api.types.is_numeric_dtype(emotion_df[col]):
+                emotion_score_columns.append(col)
+                analysis_results['emotion_format'] = 'numeric'
+    
+    # Second: Check for dictionary-based emotion columns
+    dict_emotion_columns = ['emotions', 'bert_emotions', 'combined_emotions', 
+                           'emotion_dict', 'emotion_data', 'bert_top_emotions']
+    
+    for col in dict_emotion_columns:
+        if col in emotion_df.columns:
+            sample_value = emotion_df[col].dropna().iloc[0] if len(emotion_df[col].dropna()) > 0 else None
+            if sample_value and isinstance(sample_value, str):
+                if sample_value.strip().startswith('{') or sample_value.strip().startswith('['):
+                    emotion_score_columns.append(col)
+                    analysis_results['emotion_format'] = 'dictionary'
+    
+    analysis_results['emotion_score_columns'] = emotion_score_columns
+    
+    # 5. Find sentiment column
+    sentiment_candidates = ['sentiment_score', 'sentiment', 'sentiment_value', 'polarity', 'sentiment_label']
+    for col in sentiment_candidates:
+        if col in emotion_df.columns:
+            if pd.api.types.is_numeric_dtype(emotion_df[col]):
+                analysis_results['sentiment_column'] = col
+                break
+    
+    # 6. Find temporal column
+    temporal_candidates = ['march_name', 'march_phase', 'march_id', 'date', 'time', 'period', 'phase', 'month', 'day']
+    for col in temporal_candidates:
+        if col in emotion_df.columns:
+            analysis_results['temporal_column'] = col
             break
     
-    # Temporal column
-    for col in ['march_phase', 'date', 'time']:
-        if col in emotion_cols:
-            mapping['temporal_column'] = col
-            break
-    
-    return mapping
-
-# Non-cached wrapper that enriches with actual data
-def analyze_data_structure(emotion_df, poi_gdf):
-    """Wrapper that adds runtime data to cached mappings"""
-    # Get cached column mappings
-    mapping = get_column_mappings(
-        list(emotion_df.columns),
-        list(poi_gdf.columns)
-    )
-    
-    # Add sample locations (not cached)
-    if mapping['poi_name_column']:
-        mapping['sample_locations'] = poi_gdf[mapping['poi_name_column']].dropna().unique()[:5].tolist()
-    else:
-        mapping['sample_locations'] = []
-    
-    return mapping
+    return analysis_results
 
 def display_data_analysis(analysis_results):
     """Display the automatic data structure analysis results"""
@@ -169,9 +216,10 @@ def display_data_analysis(analysis_results):
             st.write(f"**Location column:** `{analysis_results['location_column']}`")
             st.write(f"**Sentiment column:** `{analysis_results['sentiment_column']}`")
             st.write(f"**Temporal column:** `{analysis_results['temporal_column']}`")
+            st.write(f"**Emotion format:** `{analysis_results['emotion_format']}`")
             st.write(f"**Emotion columns:** {len(analysis_results['emotion_score_columns'])}")
             if analysis_results['emotion_score_columns']:
-                st.code(", ".join(analysis_results['emotion_score_columns'][:5]))
+                st.code(", ".join(analysis_results['emotion_score_columns']))
         
         with col2:
             st.markdown("### 🗺️ Spatial Data")
@@ -180,15 +228,89 @@ def display_data_analysis(analysis_results):
             st.write(f"**Death count column:** `{analysis_results['death_count_column']}`")
             st.write(f"**Sample locations:**")
             if analysis_results['sample_locations']:
-                for loc in analysis_results['sample_locations']:
+                for loc in analysis_results['sample_locations'][:5]:
                     st.write(f"  • {loc}")
         
-        # Show all columns
         with st.expander("📋 All Columns Detail"):
             st.write("**Emotion CSV columns:**")
             st.code(", ".join(analysis_results['emotion_columns']))
             st.write("**Spatial shapefile columns:**")
             st.code(", ".join(analysis_results['spatial_columns']))
+
+# ==================== EMOTION PARSING FUNCTIONS ====================
+def parse_emotion_column(emotion_text):
+    """
+    Parse emotion data from text-based dictionary/list format
+    Returns a dictionary of emotion: score pairs
+    """
+    if pd.isna(emotion_text) or not emotion_text:
+        return {}
+    
+    try:
+        # Try direct AST parsing (safest method)
+        parsed = ast.literal_eval(str(emotion_text))
+        
+        # Handle different formats
+        if isinstance(parsed, dict):
+            result = {}
+            for key, value in parsed.items():
+                if isinstance(value, (int, float)):
+                    result[key] = float(value)
+                elif isinstance(value, list) and len(value) > 0:
+                    if isinstance(value[0], (int, float)):
+                        result[key] = float(value[0])
+                    else:
+                        result[key] = 1.0
+            return result
+        
+        elif isinstance(parsed, list):
+            return {emotion: 1.0 for emotion in parsed if isinstance(emotion, str)}
+        
+    except:
+        # Fallback: regex pattern matching
+        try:
+            emotion_words = ['anger', 'fear', 'sadness', 'joy', 'surprise', 
+                           'disgust', 'neutral', 'hunger', 'despair', 'cruelty']
+            result = {}
+            text_lower = str(emotion_text).lower()
+            
+            for emotion in emotion_words:
+                if emotion in text_lower:
+                    pattern = f"'{emotion}':\s*([\d.]+)"
+                    match = re.search(pattern, text_lower)
+                    if match:
+                        result[emotion] = float(match.group(1))
+                    else:
+                        result[emotion] = 1.0
+            
+            return result
+        except:
+            return {}
+    
+    return {}
+
+def aggregate_emotions_from_dataframe(location_data, emotion_columns):
+    """
+    Aggregate emotion scores from dictionary-format columns
+    Returns a Series with emotion counts/scores
+    """
+    all_emotions = {}
+    
+    for col in emotion_columns:
+        if col not in location_data.columns:
+            continue
+        
+        for emotion_text in location_data[col]:
+            parsed_emotions = parse_emotion_column(emotion_text)
+            for emotion, score in parsed_emotions.items():
+                if emotion not in all_emotions:
+                    all_emotions[emotion] = 0
+                all_emotions[emotion] += score
+    
+    if not all_emotions:
+        return pd.Series()
+    
+    return pd.Series(all_emotions).sort_values(ascending=False)
 
 # ==================== SMART HELPER FUNCTIONS ====================
 def find_location_column(df, column_mapping):
@@ -292,9 +414,9 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         fg.add_to(m)
     
     # ========== ADD POI MARKERS ==========
-    # Get location column from smart mapping
     location_col = column_mapping['location_column']
     emotion_cols = column_mapping['emotion_score_columns']
+    emotion_format = column_mapping['emotion_format']
     
     for idx, row in poi_gdf.iterrows():
         poi_name = safe_get_value(row, poi_name_col, default='Unknown', as_type='str')
@@ -306,7 +428,6 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         location_emotions = pd.DataFrame()
         if location_col and location_col in emotion_df.columns:
             try:
-                # Try to match location name (fuzzy matching by first word)
                 search_term = poi_name.split()[0] if poi_name != 'Unknown' else poi_name
                 location_emotions = emotion_df[
                     emotion_df[location_col].str.contains(search_term, case=False, na=False)
@@ -319,23 +440,28 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
             available_cols = [col for col in emotion_cols if col in location_emotions.columns]
             
             if available_cols:
-                emotion_sums = location_emotions[available_cols].sum()
-                dominant_emotion = emotion_sums.idxmax()
-                total_emotions = len(location_emotions)
+                # Check format and aggregate accordingly
+                if emotion_format == 'dictionary':
+                    emotion_sums = aggregate_emotions_from_dataframe(location_emotions, available_cols)
+                else:
+                    emotion_sums = location_emotions[available_cols].sum()
                 
-                emotion_colors = {
-                    'anger': 'red', 'fear': 'darkpurple', 'sadness': 'blue',
-                    'joy': 'green', 'surprise': 'orange', 'disgust': 'darkred',
-                    'neutral': 'gray', 'hunger': 'lightred', 'despair': 'black',
-                    'cruelty': 'purple'
-                }
-                
-                # Match color by emotion name
-                marker_color = 'gray'
-                for emotion_key in emotion_colors.keys():
-                    if emotion_key in dominant_emotion.lower():
-                        marker_color = emotion_colors[emotion_key]
-                        break
+                if len(emotion_sums) > 0:
+                    dominant_emotion = emotion_sums.idxmax()
+                    total_emotions = len(location_emotions)
+                    
+                    emotion_colors = {
+                        'anger': 'red', 'fear': 'darkpurple', 'sadness': 'blue',
+                        'joy': 'green', 'surprise': 'orange', 'disgust': 'darkred',
+                        'neutral': 'gray', 'hunger': 'lightred', 'despair': 'black',
+                        'cruelty': 'purple'
+                    }
+                    
+                    marker_color = emotion_colors.get(dominant_emotion, 'gray')
+                else:
+                    dominant_emotion = 'unknown'
+                    total_emotions = len(location_emotions)
+                    marker_color = 'gray'
             else:
                 dominant_emotion = 'unknown'
                 total_emotions = len(location_emotions)
@@ -418,16 +544,16 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
 def analyze_location_emotions(location_name, hybrid_df, poi_row, column_mapping):
     """Analyze emotions for selected location"""
     
-    # Get location column from mapping
     location_col = column_mapping['location_column']
     emotion_cols = column_mapping['emotion_score_columns']
+    emotion_format = column_mapping['emotion_format']
     sentiment_col = column_mapping['sentiment_column']
     temporal_col = column_mapping['temporal_column']
     
     if location_col is None or location_col not in hybrid_df.columns:
         return None
     
-    # Try to match location name (fuzzy matching)
+    # Try to match location name
     try:
         search_term = location_name.split()[0]
         location_data = hybrid_df[
@@ -447,12 +573,26 @@ def analyze_location_emotions(location_name, hybrid_df, poi_row, column_mapping)
     if not available_emotion_cols:
         return None
     
-    emotion_counts = location_data[available_emotion_cols].sum().sort_values(ascending=False)
+    # Aggregate emotions based on format
+    if emotion_format == 'dictionary':
+        emotion_counts = aggregate_emotions_from_dataframe(location_data, available_emotion_cols)
+    else:
+        emotion_counts = location_data[available_emotion_cols].sum().sort_values(ascending=False)
+    
+    if emotion_counts.empty:
+        return None
     
     # Temporal analysis if available
     temporal_emotions = None
     if temporal_col and temporal_col in location_data.columns:
-        temporal_emotions = location_data.groupby(temporal_col)[available_emotion_cols].sum()
+        if emotion_format == 'dictionary':
+            temporal_emotions = {}
+            for phase in location_data[temporal_col].unique():
+                phase_data = location_data[location_data[temporal_col] == phase]
+                temporal_emotions[phase] = aggregate_emotions_from_dataframe(phase_data, available_emotion_cols)
+            temporal_emotions = pd.DataFrame(temporal_emotions).T
+        else:
+            temporal_emotions = location_data.groupby(temporal_col)[available_emotion_cols].sum()
     
     # Sentiment statistics
     avg_sentiment = None
@@ -503,7 +643,7 @@ def create_location_charts(analysis_results, column_mapping):
     charts.append(fig_bar)
     
     # 3. Temporal Emotion Evolution (if available)
-    if analysis_results['temporal_emotions'] is not None:
+    if analysis_results['temporal_emotions'] is not None and not analysis_results['temporal_emotions'].empty:
         fig_temporal = px.line(
             analysis_results['temporal_emotions'],
             title="Emotion Evolution Over March Phases",
@@ -585,6 +725,8 @@ def main():
     
     if not column_mapping['emotion_score_columns']:
         st.warning("⚠️ **No emotion score columns detected.** Emotion visualization will be unavailable.")
+    else:
+        st.success(f"✅ Detected {len(column_mapping['emotion_score_columns'])} emotion columns in '{column_mapping['emotion_format']}' format")
     
     # Create two-column layout
     col_map, col_analysis = st.columns([1.3, 1])
@@ -672,10 +814,10 @@ def main():
                 
                 # Raw data expander
                 with st.expander("📄 View Raw Emotion Data"):
-                    # Try to display most relevant columns
                     display_cols = []
-                    potential_cols = ['sentence', 'text', 'dominant_emotion', 'emotion', 
-                                     column_mapping['sentiment_column'], column_mapping['location_column']]
+                    potential_cols = ['sentence', 'text', 'entity_text', 
+                                     column_mapping['sentiment_column'], 
+                                     column_mapping['location_column']]
                     
                     for col in potential_cols:
                         if col and col in analysis['data'].columns:
@@ -698,4 +840,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
