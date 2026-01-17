@@ -143,15 +143,24 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
             
             # Popup content
             popup_html = f"""
-            <div style="font-family: Arial; width: 220px; padding: 10px;">
-                <h4 style="color: #8B0000; margin: 0 0 8px 0;">{config['name']}</h4>
-                <p style="margin: 4px 0;"><strong>Location:</strong> {row.get('POI_Name', 'Unknown')}</p>
-                <p style="margin: 4px 0;"><strong>💀 Deaths:</strong> {int(death_count)}</p>
-                <p style="margin: 4px 0;"><strong>📅 Month:</strong> {row.get('Base_month', 'N/A')}</p>
-                <p style="margin: 4px 0;"><strong>Segment:</strong> {row.get('segment', 'N/A')}</p>
-                <p style="margin: 4px 0;"><strong>Days:</strong> {row.get('Start_day', '?')}-{row.get('End_day', '?')}</p>
-            </div>
-            """
+            <div style="font-family: Arial; width: 240px; padding: 10px; background: #f5f5f5; border: 2px solid #8B7355; border-radius: 5px;">
+    <h4 style="margin: 0 0 8px 0; color: #3E2723; border-bottom: 2px solid #8B0000;">{poi_name}</h4>
+    
+    <div style="background: #4A5D3F; color: white; padding: 6px; margin: 6px 0; border-radius: 3px;">
+        <strong>{march_name}</strong><br>
+        Month: {base_month} | Segment: {row.get('segment', 'N/A')}
+    </div>
+    
+    <div style="background: #2C1810; color: #FFD700; padding: 6px; margin: 6px 0; border-radius: 3px;">
+        <strong>POW Deaths:</strong> {int(death_count)}<br>
+        <strong>Emotions:</strong> {total_emotions} records<br>
+        <strong>Dominant:</strong> {dominant_emotion.upper()}
+    </div>
+    
+    <small style="color: #666;">Click for detailed analysis</small>
+</div>
+"""
+
             
             # Add polyline
             folium.GeoJson(
@@ -553,5 +562,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
