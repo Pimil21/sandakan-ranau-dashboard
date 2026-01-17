@@ -26,13 +26,13 @@ class Config:
     LOCATION_EMOTIONS = "data/location_emotions_hybrid.csv"
     
     # Spatial data paths - 2D shapefiles
-    POI_M1 = "2D-spatial-data/POIM1.shp"
-    POI_M2 = "2D-spatial-data/POIM2.shp"
-    POI_M3 = "2D-spatial-data/POIM3.shp"
+    POI_M1 = "2d-spatial-data/POI_M1.shp"
+    POI_M2 = "2d-spatial-data/POI_M2.shp"
+    POI_M3 = "2d-spatial-data/POI_M3.shp"
     
-    ROUTE1 = "2D-spatial-data/March1.shp"
-    ROUTE2 = "2D-spatial-data/March2.shp"
-    ROUTE3 = "2D-spatial-data/March3.shp"
+    ROUTE1 = "2d-spatial-data/March1.shp"
+    ROUTE2 = "2d-spatial-data/March2.shp"
+    ROUTE3 = "2d-spatial-data/March3.shp"
 
 # ==================== DATA LOADING ====================
 @st.cache_data
@@ -553,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
