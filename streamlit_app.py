@@ -95,17 +95,165 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
     center_lat = poi_gdf.geometry.centroid.y.mean()
     center_lon = poi_gdf.geometry.centroid.x.mean()
     
-    # Initialize map
+    # Initialize map with default OSM tiles
     m = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=9,
-        tiles='OpenStreetMap'
+        tiles='OpenStreetMap',
+        attr='© OpenStreetMap contributors'
     )
     
-    # Add alternate basemaps
-    folium.TileLayer('CartoDB positron', name='Light Map').add_to(m)
-    folium.TileLayer('Stamen Terrain', name='Terrain').add_to(m)
+    # Add alternate basemaps with proper attribution
+    folium.TileLayer(
+        tiles='CartoDB positron',
+        name='Light Map',
+        attr='© CartoDB',
+        overlay=False,
+        control=True
+    ).add_to(m)
     
+    # ========== ADD ROUTE LINES ==========
+    route_configs = [
+        {'gdf': route1_gdf, 'color': '#8B0000', 'name': 'First March (Jan-Feb 1945)'},
+        {'gdf': route2_gdf, 'color': '#DC143C', 'name': 'Second March (May 1945)'},
+        {'gdf': route3_gdf, 'color': '#B22222', 'name': 'Third March (Jun 1945)'}
+    ]
+    
+    for config in route_configs:
+        route_gdf = config['gdf']
+        if route_gdf is None or route_gdf.empty:
+            continue
+        
+        fg = folium.FeatureGroup(name=config['name'])
+        
+        for idx, row in route_gdf.iterrows():
+            # Get death count for line thickness
+            death_count = row.get('size_M1', 10)
+            line_weight = max(3, min(death_count / 50, 12))
+            
+            # Popup content
+            popup_html = f"""
+            <div style="font-family: Arial; width: 220px; padding: 10px;">
+                <h4 style="color: #8B0000; margin: 0 0 8px 0;">{config['name']}</h4>
+                <p style="margin: 4px 0;"><strong>Location:</strong> {row.get('POI_Name', 'Unknown')}</p>
+                <p style="margin: 4px 0;"><strong>💀 Deaths:</strong> {int(death_count)}</p>
+                <p style="margin: 4px 0;"><strong>📅 Month:</strong> {row.get('Base_month', 'N/A')}</p>
+                <p style="margin: 4px 0;"><strong>Segment:</strong> {row.get('segment', 'N/A')}</p>
+                <p style="margin: 4px 0;"><strong>Days:</strong> {row.get('Start_day', '?')}-{row.get('End_day', '?')}</p>
+            </div>
+            """
+            
+            # Add polyline
+            folium.GeoJson(
+                row.geometry,
+                style_function=lambda x, w=line_weight, c=config['color']: {
+                    'color': c,
+                    'weight': w,
+                    'opacity': 0.8
+                },
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=row.get('POI_Name', 'Route segment')
+            ).add_to(fg)
+        
+        fg.add_to(m)
+    
+    # ========== ADD POI MARKERS ==========
+    for idx, row in poi_gdf.iterrows():
+        poi_name = row['POI_Name']
+        march_name = row['march_name']
+        death_count = row.get('size_M1', 0)
+        base_month = row.get('Base_month', 'Unknown')
+        
+        # Match with emotion data
+        location_emotions = emotion_df[
+            emotion_df['location'].str.contains(poi_name.split()[0], case=False, na=False)
+        ]
+        
+        if not location_emotions.empty:
+            emotion_cols = ['anger', 'fear', 'sadness', 'joy', 'surprise', 'disgust', 'neutral']
+            available_cols = [col for col in emotion_cols if col in location_emotions.columns]
+            
+            if available_cols:
+                emotion_sums = location_emotions[available_cols].sum()
+                dominant_emotion = emotion_sums.idxmax()
+                total_emotions = len(location_emotions)
+                
+                emotion_colors = {
+                    'anger': 'red', 'fear': 'darkpurple', 'sadness': 'blue',
+                    'joy': 'green', 'surprise': 'orange', 'disgust': 'darkred',
+                    'neutral': 'gray', 'hunger': 'lightred', 'despair': 'black'
+                }
+                marker_color = emotion_colors.get(dominant_emotion, 'gray')
+            else:
+                dominant_emotion = 'unknown'
+                total_emotions = len(location_emotions)
+                marker_color = 'gray'
+        else:
+            dominant_emotion = 'No data'
+            total_emotions = 0
+            marker_color = 'lightgray'
+        
+        # Icon by march
+        icon_map = {1: 'star', 2: 'flag', 3: 'certificate'}
+        icon = icon_map.get(row['march_id'], 'info-sign')
+        
+        # Popup
+        popup_html = f"""
+        <div style="font-family: 'Courier New', monospace; width: 260px; padding: 12px; 
+                    background: #E8DCC4; border: 3px solid #8B7355; border-radius: 5px;">
+            <h3 style="margin: 0 0 10px 0; color: #3E2723; border-bottom: 2px solid #8B0000;">
+                📍 {poi_name}
+            </h3>
+            
+            <div style="background: #4A5D3F; color: #E8DCC4; padding: 8px; border-radius: 3px; margin: 8px 0;">
+                <strong>🎖️ {march_name}</strong><br>
+                <strong>📅 Month:</strong> {base_month}<br>
+                <strong>🔢 Segment:</strong> {row.get('segment', 'N/A')}
+            </div>
+            
+            <div style="background: #2C1810; color: #FFD700; padding: 8px; border-radius: 3px; margin: 8px 0;">
+                <strong>💀 POW Deaths:</strong> {int(death_count)}<br>
+                <strong>📊 Emotion Records:</strong> {total_emotions}<br>
+                <strong>😔 Dominant:</strong> <span style="color: {marker_color}; text-transform: uppercase;">{dominant_emotion}</span>
+            </div>
+            
+            <small style="color: #5D4E37; font-style: italic;">
+                ⬅️ Click to view analysis in panel
+            </small>
+        </div>
+        """
+        
+        # Add marker
+        folium.Marker(
+            location=[row.geometry.y, row.geometry.x],
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=f"{poi_name} - {int(death_count)} deaths",
+            icon=folium.Icon(color=marker_color, icon=icon, prefix='glyphicon')
+        ).add_to(m)
+    
+    # Add legend
+    legend_html = '''
+    <div style="position: fixed; top: 10px; right: 10px; width: 200px; 
+                background: rgba(255,255,255,0.9); border: 2px solid #8B7355; 
+                border-radius: 5px; padding: 10px; font-size: 11px; z-index: 9999;">
+        <h4 style="margin: 0 0 8px 0; color: #3E2723;">🎖️ Legend</h4>
+        <p style="margin: 3px 0;"><b>Emotions:</b></p>
+        <p style="margin: 2px 0;">⚫ Red - Anger</p>
+        <p style="margin: 2px 0;">⚫ Blue - Sadness</p>
+        <p style="margin: 2px 0;">⚫ Purple - Fear</p>
+        <p style="margin: 6px 0 3px 0;"><b>March Icons:</b></p>
+        <p style="margin: 2px 0;">⭐ First | 🚩 Second | 🎖️ Third</p>
+        <p style="margin: 6px 0 3px 0;"><b>Line Thickness:</b></p>
+        <p style="margin: 2px 0;">Proportional to deaths</p>
+    </div>
+    '''
+    m.get_root().html.add_child(folium.Element(legend_html))
+    
+    # Layer control
+    folium.LayerControl(position='bottomleft').add_to(m)
+    
+    return m
+
     # ========== ADD ROUTE LINES ==========
     route_configs = [
         {'gdf': route1_gdf, 'color': '#8B0000', 'name': 'First March (Jan-Feb 1945)'},
@@ -391,3 +539,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
