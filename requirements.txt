@@ -8,3 +8,4 @@ streamlit-folium
 shapely
 pyproj
 branca
+scipy
