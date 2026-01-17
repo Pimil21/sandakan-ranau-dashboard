@@ -306,10 +306,20 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         death_count = row.get('size_M1', 0)
         base_month = row.get('Base_month', 'Unknown')
         
-        # Match with emotion data
-        location_emotions = emotion_df[
-            emotion_df['location'].str.contains(poi_name.split()[0], case=False, na=False)
-        ]
+        # Match with emotion data - with column name checking
+        location_emotions = pd.DataFrame()  # Empty default
+            if 'location' in emotion_df.columns:
+                location_emotions = emotion_df[
+                    emotion_df['location'].str.contains(poi_name.split()[0], case=False, na=False)
+                ]
+            elif 'Location' in emotion_df.columns:  # Check capitalized version
+                location_emotions = emotion_df[
+                    emotion_df['Location'].str.contains(poi_name.split()[0], case=False, na=False)
+                ]
+            elif 'poi_name' in emotion_df.columns:
+                location_emotions = emotion_df[
+                    emotion_df['poi_name'].str.contains(poi_name.split()[0], case=False, na=False)
+                ]
         
         if not location_emotions.empty:
             # Calculate dominant emotion
@@ -539,4 +549,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
