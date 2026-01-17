@@ -341,7 +341,7 @@ def safe_get_value(row, column_name, default=0, as_type='int'):
 
 # ==================== MAP CREATION ====================
 def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_df, column_mapping):
-    """Create Folium map with POI, routes, and synchronized emotions"""
+    """Create Folium map with POI, routes, and synchronized emotions with layer control"""
     
     # Calculate map center
     center_lat = poi_gdf.geometry.centroid.y.mean()
@@ -364,34 +364,33 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         control=True
     ).add_to(m)
     
-    # ========== ADD ROUTE LINES ==========
+    # ========== ROUTE CONFIGURATION ==========
     route_configs = [
-        {'gdf': route1_gdf, 'color': '#8B0000', 'name': 'First March (Jan-Feb 1945)'},
-        {'gdf': route2_gdf, 'color': '#DC143C', 'name': 'Second March (May 1945)'},
-        {'gdf': route3_gdf, 'color': '#B22222', 'name': 'Third March (Jun 1945)'}
+        {'gdf': route1_gdf, 'color': '#8B0000', 'name': 'First March Route', 'label': 'First March (Jan-Feb 1945)'},
+        {'gdf': route2_gdf, 'color': '#DC143C', 'name': 'Second March Route', 'label': 'Second March (May 1945)'},
+        {'gdf': route3_gdf, 'color': '#B22222', 'name': 'Third March Route', 'label': 'Third March (Jun 1945)'}
     ]
     
     poi_name_col = column_mapping['poi_name_column']
     death_count_col = column_mapping['death_count_column']
     
+    # ========== ADD ROUTE LINES WITH FEATURE GROUPS ==========
     for config in route_configs:
         route_gdf = config['gdf']
         if route_gdf is None or route_gdf.empty:
             continue
         
-        fg = folium.FeatureGroup(name=config['name'])
+        # Create FeatureGroup for this route (enables layer control)
+        fg = folium.FeatureGroup(name=config['name'], show=True)
         
         for idx, row in route_gdf.iterrows():
-            # Get death count for line thickness
             death_count = safe_get_value(row, death_count_col, default=0, as_type='int')
             line_weight = max(3, min(death_count / 50, 12))
-            
             poi_name = safe_get_value(row, poi_name_col, default='Unknown', as_type='str')
             
-            # Popup content for routes
             route_popup_html = f"""
             <div style="font-family: Arial; width: 220px; padding: 10px;">
-                <h4 style="color: #8B0000; margin: 0 0 8px 0;">{config['name']}</h4>
+                <h4 style="color: #8B0000; margin: 0 0 8px 0;">{config['label']}</h4>
                 <p style="margin: 4px 0;"><strong>Location:</strong> {poi_name}</p>
                 <p style="margin: 4px 0;"><strong>Deaths:</strong> {death_count} POWs</p>
                 <p style="margin: 4px 0;"><strong>Month:</strong> {safe_get_value(row, 'Base_month', 'N/A', 'str')}</p>
@@ -399,7 +398,6 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
             </div>
             """
             
-            # Add polyline
             folium.GeoJson(
                 row.geometry,
                 style_function=lambda x, w=line_weight, c=config['color']: {
@@ -413,16 +411,24 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         
         fg.add_to(m)
     
-    # ========== ADD POI MARKERS ==========
+    # ========== ADD POI MARKERS WITH FEATURE GROUPS BY MARCH ==========
     location_col = column_mapping['location_column']
     emotion_cols = column_mapping['emotion_score_columns']
     emotion_format = column_mapping['emotion_format']
+    
+    # Create separate FeatureGroups for each march's POIs
+    poi_feature_groups = {
+        1: folium.FeatureGroup(name='First March POIs', show=True),
+        2: folium.FeatureGroup(name='Second March POIs', show=True),
+        3: folium.FeatureGroup(name='Third March POIs', show=True)
+    }
     
     for idx, row in poi_gdf.iterrows():
         poi_name = safe_get_value(row, poi_name_col, default='Unknown', as_type='str')
         march_name = safe_get_value(row, 'march_name', default='Unknown March', as_type='str')
         death_count = safe_get_value(row, death_count_col, default=0, as_type='int')
         base_month = safe_get_value(row, 'Base_month', default='Unknown', as_type='str')
+        march_id = safe_get_value(row, 'march_id', default=1, as_type='int')
         
         # Match with emotion data
         location_emotions = pd.DataFrame()
@@ -440,7 +446,6 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
             available_cols = [col for col in emotion_cols if col in location_emotions.columns]
             
             if available_cols:
-                # Check format and aggregate accordingly
                 if emotion_format == 'dictionary':
                     emotion_sums = aggregate_emotions_from_dataframe(location_emotions, available_cols)
                 else:
@@ -454,7 +459,7 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
                         'anger': 'red', 'fear': 'darkpurple', 'sadness': 'blue',
                         'joy': 'green', 'surprise': 'orange', 'disgust': 'darkred',
                         'neutral': 'gray', 'hunger': 'lightred', 'despair': 'black',
-                        'cruelty': 'purple'
+                        'cruelty': 'purple', 'death': 'darkred'
                     }
                     
                     marker_color = emotion_colors.get(dominant_emotion, 'gray')
@@ -473,7 +478,6 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         
         # Icon by march phase
         icon_map = {1: 'star', 2: 'flag', 3: 'certificate'}
-        march_id = safe_get_value(row, 'march_id', default=1, as_type='int')
         icon = icon_map.get(march_id, 'info-sign')
         
         # Create popup
@@ -500,43 +504,82 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
         </div>
         """
         
-        # Add marker to map
+        # Add marker to the appropriate FeatureGroup
         folium.Marker(
             location=[row.geometry.y, row.geometry.x],
             popup=folium.Popup(popup_html, max_width=300),
             tooltip=f"{poi_name} ({march_name}) - {death_count} deaths",
             icon=folium.Icon(color=marker_color, icon=icon, prefix='glyphicon')
-        ).add_to(m)
+        ).add_to(poi_feature_groups[march_id])
     
-    # Add legend
+    # Add all POI FeatureGroups to map
+    for fg in poi_feature_groups.values():
+        fg.add_to(m)
+    
+    # ========== ENHANCED LEGEND ==========
     legend_html = '''
-    <div style="position: fixed; top: 10px; right: 10px; width: 200px; 
-                background: rgba(255,255,255,0.95); border: 2px solid #8B7355; 
-                border-radius: 5px; padding: 10px; font-size: 11px; z-index: 9999;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
-        <h4 style="margin: 0 0 8px 0; color: #3E2723; border-bottom: 2px solid #8B0000;">
-            Map Legend
+    <div style="position: fixed; top: 10px; right: 10px; width: 220px; 
+                background: rgba(255,255,255,0.98); border: 3px solid #8B7355; 
+                border-radius: 8px; padding: 12px; font-size: 11px; z-index: 9999;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+        <h4 style="margin: 0 0 10px 0; color: #3E2723; border-bottom: 2px solid #8B0000; padding-bottom: 5px;">
+            🗺️ Map Legend
         </h4>
         
-        <p style="margin: 5px 0 3px 0; font-weight: bold;">Marker Colors (Emotions):</p>
-        <p style="margin: 2px 0; color: red;">Red - Anger/Disgust</p>
-        <p style="margin: 2px 0; color: blue;">Blue - Sadness</p>
-        <p style="margin: 2px 0; color: purple;">Purple - Fear</p>
-        <p style="margin: 2px 0; color: gray;">Gray - Neutral</p>
+        <p style="margin: 8px 0 4px 0; font-weight: bold; color: #3E2723; font-size: 10px;">
+            📍 MARKER COLORS (Emotions):
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 3px; margin-left: 5px;">
+            <div style="display: flex; align-items: center;">
+                <span style="width: 12px; height: 12px; background: red; display: inline-block; margin-right: 6px; border-radius: 2px;"></span>
+                <span style="font-size: 10px;">Red - Anger/Disgust</span>
+            </div>
+            <div style="display: flex; align-items: center;">
+                <span style="width: 12px; height: 12px; background: blue; display: inline-block; margin-right: 6px; border-radius: 2px;"></span>
+                <span style="font-size: 10px;">Blue - Sadness</span>
+            </div>
+            <div style="display: flex; align-items: center;">
+                <span style="width: 12px; height: 12px; background: purple; display: inline-block; margin-right: 6px; border-radius: 2px;"></span>
+                <span style="font-size: 10px;">Purple - Fear</span>
+            </div>
+            <div style="display: flex; align-items: center;">
+                <span style="width: 12px; height: 12px; background: gray; display: inline-block; margin-right: 6px; border-radius: 2px;"></span>
+                <span style="font-size: 10px;">Gray - Neutral</span>
+            </div>
+        </div>
         
-        <p style="margin: 8px 0 3px 0; font-weight: bold;">March Phase Icons:</p>
-        <p style="margin: 2px 0;">Star - First March</p>
-        <p style="margin: 2px 0;">Flag - Second March</p>
-        <p style="margin: 2px 0;">Medal - Third March</p>
+        <p style="margin: 10px 0 4px 0; font-weight: bold; color: #3E2723; font-size: 10px;">
+            🎖️ MARCH PHASE ICONS:
+        </p>
+        <div style="margin-left: 5px; font-size: 10px; line-height: 1.4;">
+            <p style="margin: 2px 0;">⭐ Star - First March</p>
+            <p style="margin: 2px 0;">🚩 Flag - Second March</p>
+            <p style="margin: 2px 0;">🏅 Medal - Third March</p>
+        </div>
         
-        <p style="margin: 8px 0 3px 0; font-weight: bold;">Route Line Thickness:</p>
-        <p style="margin: 2px 0;">Proportional to death count</p>
+        <p style="margin: 10px 0 4px 0; font-weight: bold; color: #3E2723; font-size: 10px;">
+            📏 ROUTE LINE THICKNESS:
+        </p>
+        <p style="margin: 2px 0 0 5px; font-size: 10px;">
+            Proportional to death count
+        </p>
+        
+        <div style="margin-top: 10px; padding: 6px; background: #FFF8DC; border: 1px solid #DEB887; border-radius: 4px;">
+            <p style="margin: 0; font-size: 9px; color: #8B7355; text-align: center;">
+                💡 Use layer control (bottom-left)<br>to toggle routes and POIs
+            </p>
+        </div>
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
     
-    # Layer control
-    folium.LayerControl(position='bottomleft').add_to(m)
+    # ========== LAYER CONTROL ==========
+    # Add enhanced layer control with all layers
+    folium.LayerControl(
+        position='bottomleft',
+        collapsed=False,
+        autoZIndex=True
+    ).add_to(m)
     
     return m
 
@@ -840,3 +883,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
