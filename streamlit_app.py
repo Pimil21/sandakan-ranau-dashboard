@@ -1,647 +1,537 @@
-#!/usr/bin/env python3
-"""
-SOLUTION C: RO2 STREAMLIT DASHBOARD - CLOUD DEPLOYABLE
-Sandakan-Ranau Death Marches Emotion Analysis
-Deploy for FREE on Streamlit Community Cloud!
-
-Author: Your Name
-Date: January 2026
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 import plotly.express as px
-# Remove scipy import - use numpy instead
-# from scipy.stats import pearsonr
+import plotly.graph_objects as go
 from pathlib import Path
-from collections import Counter
+import geopandas as gpd
+import folium
+from streamlit_folium import st_folium
+from scipy import stats
+import branca.colormap as cm
 
-# ============================================================================
-# PAGE CONFIGURATION
-# ============================================================================
-
+# ==================== PAGE CONFIG ====================
 st.set_page_config(
-    page_title="Sandakan-Ranau Death Marches Emotion Analysis",
-    page_icon="📊",
+    page_title="Sandakan-Ranau Death Marches Analysis",
+    page_icon="🎖️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
-
+# ==================== CONFIGURATION ====================
 class Config:
-    # Use relative paths for Streamlit Cloud deployment
+    # Data paths
     HYBRID_EMOTIONS = "data/hybrid_emotion_analysis.csv"
     LOCATION_EMOTIONS = "data/location_emotions_hybrid.csv"
+    
+    # Spatial data paths - POI files
+    POI_M1 = "spatial_data/POI_M1_3D.shp"
+    POI_M2 = "spatial_data/POI_M2_3D.shp"
+    POI_M3 = "spatial_data/POI_M3_3D.shp"
+    
+    # Spatial data paths - Route files
+    ROUTE1 = "spatial_data/March1_Multipatch.shp"
+    ROUTE2 = "spatial_data/March2_Multipatch.shp"
+    ROUTE3 = "spatial_data/March3_Multipatch.shp"
 
-# ============================================================================
-# COLORS
-# ============================================================================
-
-INSIDE_OUT_COLORS = {
-    'joy': '#F8D547', 'sadness': '#5499C7', 'anger': '#E74C3C',
-    'fear': '#9B59B6', 'disgust': '#27AE60', 'trust': '#3498DB',
-    'anticipation': '#F39C12', 'surprise': '#E91E63',
-    'suffering': '#8B4513', 'death': '#2C3E50', 'exhaustion': '#7F8C8D',
-    'courage': '#16A085', 'despair': '#34495E', 'no_data': '#95A5A6'
-}
-
-# ============================================================================
-# CACHING DATA LOADING
-# ============================================================================
-
+# ==================== DATA LOADING ====================
 @st.cache_data
 def load_data():
-    """Load and process emotion data (cached for performance)"""
-    
+    """Load emotion analysis data"""
     try:
-        hybrid_emotions = pd.read_csv(Config.HYBRID_EMOTIONS)
-        location_emotions = pd.read_csv(Config.LOCATION_EMOTIONS)
+        hybrid_df = pd.read_csv(Config.HYBRID_EMOTIONS)
+        location_df = pd.read_csv(Config.LOCATION_EMOTIONS)
+        return hybrid_df, location_df
+    except Exception as e:
+        st.error(f"Error loading emotion data: {str(e)}")
+        return None, None
+
+@st.cache_data
+def load_spatial_data():
+    """Load shapefiles and convert to GeoDataFrames"""
+    try:
+        # Load POI locations for all three marches
+        poi_m1 = gpd.read_file(Config.POI_M1)
+        poi_m2 = gpd.read_file(Config.POI_M2)
+        poi_m3 = gpd.read_file(Config.POI_M3)
         
-        # Parse emotion lists
-        for col in ['emotions', 'bert_top_emotions', 'combined_emotions']:
-            if col in hybrid_emotions.columns:
-                hybrid_emotions[col] = hybrid_emotions[col].apply(
-                    lambda x: eval(x) if pd.notna(x) and isinstance(x, str) and x.startswith('[') else []
-                )
+        # Add march identifier
+        poi_m1['march_id'] = 1
+        poi_m2['march_id'] = 2
+        poi_m3['march_id'] = 3
         
-        # Create RO2 compatible dataframe
-        records = []
+        poi_m1['march_name'] = 'First March'
+        poi_m2['march_name'] = 'Second March'
+        poi_m3['march_name'] = 'Third March'
         
-        for idx, row in hybrid_emotions.iterrows():
-            location_name = row['entity_text']
-            
-            loc_info = location_emotions[location_emotions['location_name'] == location_name]
-            if len(loc_info) > 0:
-                lat = loc_info.iloc[0]['latitude']
-                lon = loc_info.iloc[0]['longitude']
-            else:
-                lat, lon = None, None
-            
-            combined_emotions = row.get('combined_emotions', [])
-            if combined_emotions and len(combined_emotions) > 0:
-                emotion_counts = Counter(combined_emotions)
-                dominant_emotion = emotion_counts.most_common(1)[0][0]
-                emotion_intensity = len(combined_emotions) / 10
-            else:
-                dominant_emotion = 'unknown'
-                emotion_intensity = 0
-            
-            sentiment_polarity = row.get('sentiment_score', 0)
-            sentiment_label = row.get('sentiment_label', 'neutral')
-            
-            emotion_scores = {}
-            for emotion in combined_emotions:
-                emotion_scores[f'{emotion}_score'] = 1
-            
-            march_number = assign_march_number(location_name)
-            
-            record = {
-                'location_name': location_name,
-                'latitude': lat,
-                'longitude': lon,
-                'dominant_emotion': dominant_emotion,
-                'emotion_intensity': emotion_intensity,
-                'sentiment_polarity': sentiment_polarity,
-                'sentiment_label': sentiment_label,
-                'march_number': march_number,
-                'distance_from_start_km': 0,
-                **emotion_scores
-            }
-            
-            records.append(record)
+        # Combine all POIs
+        poi_gdf = pd.concat([poi_m1, poi_m2, poi_m3], ignore_index=True)
         
-        df = pd.DataFrame(records)
-        df['distance_from_start_km'] = df['distance_from_start_km'].fillna(0)
+        # Load route lines
+        route1_gdf = gpd.read_file(Config.ROUTE1)
+        route2_gdf = gpd.read_file(Config.ROUTE2)
+        route3_gdf = gpd.read_file(Config.ROUTE3)
         
-        return df
+        # Ensure WGS84 projection
+        poi_gdf = poi_gdf.to_crs(epsg=4326)
+        route1_gdf = route1_gdf.to_crs(epsg=4326)
+        route2_gdf = route2_gdf.to_crs(epsg=4326)
+        route3_gdf = route3_gdf.to_crs(epsg=4326)
+        
+        st.success(f"✅ Loaded {len(poi_gdf)} POI locations across 3 death marches")
+        
+        return poi_gdf, route1_gdf, route2_gdf, route3_gdf
         
     except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return pd.DataFrame()
+        st.error(f"⚠️ Error loading spatial data: {str(e)}")
+        return None, None, None, None
 
-def assign_march_number(location_name):
-    """Assign march number based on location"""
-    loc_lower = str(location_name).lower()
+# ==================== MAP CREATION ====================
+def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_df):
+    """Create Folium map with POI, routes, and death statistics"""
     
-    if any(x in loc_lower for x in ['sandakan', 'mile 8', 'beluran']):
-        return 1
-    elif any(x in loc_lower for x in ['paginatan', 'telupid']):
-        return 2
-    elif any(x in loc_lower for x in ['boto']):
-        return 3
-    elif 'ranau' in loc_lower:
-        return 1
-    else:
-        return 1
-
-# ============================================================================
-# STATISTICAL FUNCTIONS
-# ============================================================================
-
-def calculate_moran_i(df):
-    """Calculate Moran's I"""
-    emotions = df.groupby('location_name')['emotion_intensity'].mean()
-    n = len(emotions)
+    # Calculate map center
+    center_lat = poi_gdf.geometry.centroid.y.mean()
+    center_lon = poi_gdf.geometry.centroid.x.mean()
     
-    if n < 2:
-        return 0.0
+    # Initialize map with historical tile
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=9,
+        tiles='OpenStreetMap',
+        attr='Sandakan-Ranau Death Marches 1945'
+    )
     
-    mean_emotion = emotions.mean()
-    locations = df[['location_name', 'latitude', 'longitude']].drop_duplicates()
-    locations = locations[locations['latitude'].notna() & locations['longitude'].notna()]
+    # Add alternate basemaps
+    folium.TileLayer('CartoDB positron', name='Light Map').add_to(m)
+    folium.TileLayer('Stamen Terrain', name='Terrain').add_to(m)
     
-    if len(locations) < 2:
-        return 0.0
+    # ========== ADD ROUTE LINES WITH DEATH STATISTICS ==========
+    route_configs = [
+        {
+            'gdf': route1_gdf,
+            'color': '#8B0000',  # Dark red
+            'name': 'First March (Jan-Feb 1945)',
+            'size_field': 'size_M1'
+        },
+        {
+            'gdf': route2_gdf,
+            'color': '#DC143C',  # Crimson
+            'name': 'Second March (May 1945)',
+            'size_field': 'size_M1'  # Adjust if different
+        },
+        {
+            'gdf': route3_gdf,
+            'color': '#B22222',  # Fire brick
+            'name': 'Third March (Jun 1945)',
+            'size_field': 'size_M1'  # Adjust if different
+        }
+    ]
     
-    numerator = 0
-    denominator = 0
-    weights_sum = 0
-    
-    for i, row1 in locations.iterrows():
-        for j, row2 in locations.iterrows():
-            if i != j:
-                dist = np.sqrt((row1['latitude'] - row2['latitude'])**2 + 
-                             (row1['longitude'] - row2['longitude'])**2)
-                weight = 1 / dist if dist > 0 else 0
-                weights_sum += weight
+    for config in route_configs:
+        route_gdf = config['gdf']
+        if route_gdf is not None and not route_gdf.empty:
+            # Create feature group for this march
+            fg = folium.FeatureGroup(name=config['name'])
+            
+            for idx, row in route_gdf.iterrows():
+                # Get death count for line weight
+                death_count = row.get(config['size_field'], 10)
+                line_weight = max(3, min(death_count / 50, 15))  # Scale between 3-15
                 
-                val1 = emotions.get(row1['location_name'], 0)
-                val2 = emotions.get(row2['location_name'], 0)
-                numerator += weight * (val1 - mean_emotion) * (val2 - mean_emotion)
+                # Create popup with segment info
+                popup_html = f"""
+                <div style="font-family: Arial; width: 200px;">
+                    <h4 style="color: #8B0000; margin: 0 0 10px 0;">{config['name']}</h4>
+                    <p style="margin: 5px 0;"><strong>Location:</strong> {row.get('POI_Name', 'Unknown')}</p>
+                    <p style="margin: 5px 0;"><strong>💀 Deaths:</strong> {int(death_count)}</p>
+                    <p style="margin: 5px 0;"><strong>📅 Base Month:</strong> {row.get('Base_month', 'N/A')}</p>
+                    <p style="margin: 5px 0;"><strong>Segment:</strong> {row.get('segment', 'N/A')}</p>
+                </div>
+                """
+                
+                # Add line with varying thickness
+                folium.GeoJson(
+                    row.geometry,
+                    style_function=lambda x, w=line_weight, c=config['color']: {
+                        'color': c,
+                        'weight': w,
+                        'opacity': 0.7,
+                        'lineJoin': 'round'
+                    },
+                    popup=folium.Popup(popup_html, max_width=250),
+                    tooltip=f"{row.get('POI_Name', 'Route segment')}"
+                ).add_to(fg)
+            
+            fg.add_to(m)
     
-    for val in emotions:
-        denominator += (val - mean_emotion)**2
+    # ========== ADD POI MARKERS WITH EMOTIONS ==========
+    # Create colormap for death counts
+    max_deaths = poi_gdf['size_M1'].max() if 'size_M1' in poi_gdf.columns else 100
     
-    if denominator > 0 and weights_sum > 0:
-        moran_i = (n / weights_sum) * (numerator / denominator)
-    else:
-        moran_i = 0
+    for idx, row in poi_gdf.iterrows():
+        poi_name = row['POI_Name']
+        march_name = row['march_name']
+        death_count = row.get('size_M1', 0)
+        base_month = row.get('Base_month', 'Unknown')
+        
+        # Try to match with emotion data (fuzzy matching)
+        location_emotions = emotion_df[
+            emotion_df['location'].str.contains(poi_name.split()[0], case=False, na=False)
+        ]
+        
+        if not location_emotions.empty:
+            # Calculate dominant emotion
+            emotion_cols = ['anger', 'fear', 'sadness', 'joy', 'surprise', 'disgust', 'neutral']
+            available_cols = [col for col in emotion_cols if col in location_emotions.columns]
+            
+            if available_cols:
+                emotion_sums = location_emotions[available_cols].sum()
+                dominant_emotion = emotion_sums.idxmax()
+                total_emotions = len(location_emotions)
+                
+                # Color by dominant emotion
+                emotion_colors = {
+                    'anger': 'red',
+                    'fear': 'darkpurple',
+                    'sadness': 'blue',
+                    'joy': 'green',
+                    'surprise': 'orange',
+                    'disgust': 'darkred',
+                    'neutral': 'gray',
+                    'hunger': 'lightred',
+                    'despair': 'black',
+                    'cruelty': 'purple'
+                }
+                marker_color = emotion_colors.get(dominant_emotion, 'gray')
+            else:
+                dominant_emotion = 'unknown'
+                total_emotions = len(location_emotions)
+                marker_color = 'gray'
+        else:
+            dominant_emotion = 'No data'
+            total_emotions = 0
+            marker_color = 'lightgray'
+        
+        # Icon shape by march
+        icon_shapes = {1: 'star', 2: 'flag', 3: 'certificate'}
+        icon = icon_shapes.get(row['march_id'], 'info-sign')
+        
+        # Create detailed popup
+        popup_html = f"""
+        <div style="font-family: 'Courier New', monospace; width: 260px; padding: 12px; 
+                    background: linear-gradient(135deg, #E8DCC4, #D7CCC8); 
+                    border: 3px solid #8B7355; border-radius: 5px;">
+            <h3 style="margin: 0 0 12px 0; color: #3E2723; border-bottom: 2px solid #8B0000; padding-bottom: 5px;">
+                📍 {poi_name}
+            </h3>
+            
+            <div style="background: #4A5D3F; color: #E8DCC4; padding: 8px; border-radius: 3px; margin: 10px 0;">
+                <strong>🎖️ March Phase:</strong> {march_name}<br>
+                <strong>📅 Month:</strong> {base_month}<br>
+                <strong>🔢 Segment:</strong> {row.get('segment', 'N/A')}
+            </div>
+            
+            <div style="background: #2C1810; color: #FFD700; padding: 8px; border-radius: 3px; margin: 10px 0;">
+                <strong>💀 POW Deaths:</strong> {int(death_count)} prisoners<br>
+                <strong>📊 Emotion Records:</strong> {total_emotions}<br>
+                <strong>😔 Dominant Emotion:</strong> 
+                <span style="color: {marker_color}; font-weight: bold; text-transform: uppercase;">
+                    {dominant_emotion}
+                </span>
+            </div>
+            
+            <div style="background: #5D4E37; color: #C3B091; padding: 6px; border-radius: 3px; font-size: 11px;">
+                <strong>Coordinates:</strong><br>
+                Lat: {row.geometry.y:.5f}°<br>
+                Lon: {row.geometry.x:.5f}°
+            </div>
+            
+            <hr style="border-color: #8B7355; margin: 8px 0;">
+            <small style="color: #5D4E37; font-style: italic;">
+                ⬅️ Click marker to view detailed analysis in dashboard panel
+            </small>
+        </div>
+        """
+        
+        # Add marker
+        folium.Marker(
+            location=[row.geometry.y, row.geometry.x],
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=f"{poi_name} ({march_name}) - {int(death_count)} deaths",
+            icon=folium.Icon(
+                color=marker_color,
+                icon=icon,
+                prefix='glyphicon'
+            )
+        ).add_to(m)
     
-    return moran_i
+    # Add legend
+    legend_html = '''
+    <div style="position: fixed; top: 10px; right: 10px; width: 220px; 
+                background: rgba(227, 220, 196, 0.95); 
+                border: 3px solid #8B7355; border-radius: 8px; 
+                padding: 15px; font-family: 'Courier New', monospace; 
+                font-size: 12px; z-index: 9999;">
+        <h4 style="margin: 0 0 10px 0; color: #3E2723; border-bottom: 2px solid #8B0000;">
+            🎖️ Map Legend
+        </h4>
+        <p style="margin: 5px 0;"><b>Marker Colors (Emotions):</b></p>
+        <p style="margin: 3px 0; color: red;">⚫ Red - Anger/Disgust</p>
+        <p style="margin: 3px 0; color: blue;">⚫ Blue - Sadness</p>
+        <p style="margin: 3px 0; color: purple;">⚫ Purple - Fear</p>
+        <p style="margin: 3px 0; color: gray;">⚫ Gray - Neutral</p>
+        
+        <p style="margin: 10px 0 5px 0;"><b>Marker Shapes:</b></p>
+        <p style="margin: 3px 0;">⭐ Star - First March</p>
+        <p style="margin: 3px 0;">🚩 Flag - Second March</p>
+        <p style="margin: 3px 0;">🎖️ Medal - Third March</p>
+        
+        <p style="margin: 10px 0 5px 0;"><b>Line Thickness:</b></p>
+        <p style="margin: 3px 0;">Proportional to death count</p>
+    </div>
+    '''
+    m.get_root().html.add_child(folium.Element(legend_html))
+    
+    # Add layer control
+    folium.LayerControl(position='bottomleft').add_to(m)
+    
+    # Add fullscreen option
+    folium.plugins.Fullscreen(position='topleft').add_to(m)
+    
+    return m
 
-def get_statistical_summary(df):
-    """Get statistical summary"""
-    valid_data = df[['emotion_intensity', 'sentiment_polarity']].dropna()
+# ==================== ANALYSIS FUNCTIONS ====================
+def analyze_location_emotions(location_name, hybrid_df, poi_row):
+    """Generate comprehensive emotion statistics for selected location"""
     
-    if len(valid_data) > 1:
-        # Use numpy correlation instead of scipy
-        corr = np.corrcoef(valid_data['emotion_intensity'], 
-                          valid_data['sentiment_polarity'])[0, 1]
-        # Simple p-value approximation
-        n = len(valid_data)
-        t_stat = corr * np.sqrt(n - 2) / np.sqrt(1 - corr**2)
-        from math import erfc
-        p_value = erfc(abs(t_stat) / np.sqrt(2))
-    else:
-        corr, p_value = 0, 1.0
+    # Fuzzy match location names
+    location_data = hybrid_df[
+        hybrid_df['location'].str.contains(location_name.split()[0], case=False, na=False)
+    ]
     
-    moran_i = calculate_moran_i(df)
-    interpretation = "Dispersed" if moran_i < 0 else "Clustered" if moran_i > 0.3 else "Random"
+    if location_data.empty:
+        return None
     
-    dominant = df['dominant_emotion'].mode()[0] if len(df['dominant_emotion'].mode()) > 0 else 'N/A'
+    # Get emotion columns
+    emotion_cols = [col for col in ['anger', 'fear', 'sadness', 'joy', 'surprise', 
+                                     'disgust', 'neutral', 'hunger', 'despair', 'cruelty'] 
+                    if col in location_data.columns]
+    
+    # Calculate statistics
+    emotion_counts = location_data[emotion_cols].sum().sort_values(ascending=False)
+    
+    # Temporal analysis if available
+    temporal_col = None
+    if 'march_phase' in location_data.columns:
+        temporal_col = 'march_phase'
+    elif 'date' in location_data.columns:
+        temporal_col = 'date'
+    
+    temporal_emotions = None
+    if temporal_col:
+        temporal_emotions = location_data.groupby(temporal_col)[emotion_cols].sum()
+    
+    # Sentiment statistics
+    avg_sentiment = location_data['sentiment_score'].mean() if 'sentiment_score' in location_data.columns else None
+    sentiment_std = location_data['sentiment_score'].std() if 'sentiment_score' in location_data.columns else None
     
     return {
-        'Total Emotion Records': len(df),
-        'Unique POI Locations': df['location_name'].nunique(),
-        "Moran's I": f"{moran_i:.4f}",
-        'Interpretation': interpretation,
-        'Avg Emotion Score': f"{df['emotion_intensity'].mean():.3f}",
-        'Avg Sentiment Polarity': f"{df['sentiment_polarity'].mean():.3f}",
-        'Emotion-Sentiment Corr': f"{corr:.3f}",
-        'Correlation P-value': f"{p_value:.4f}",
-        'Dominant Emotion': dominant.capitalize()
+        'total_records': len(location_data),
+        'emotion_counts': emotion_counts,
+        'temporal_emotions': temporal_emotions,
+        'avg_sentiment': avg_sentiment,
+        'sentiment_std': sentiment_std,
+        'data': location_data,
+        'poi_info': poi_row
     }
 
-# ============================================================================
-# VISUALIZATION FUNCTIONS
-# ============================================================================
+def create_location_charts(analysis_results):
+    """Create detailed Plotly charts for selected location"""
+    charts = []
+    
+    # 1. Emotion Distribution Pie Chart
+    fig_pie = px.pie(
+        values=analysis_results['emotion_counts'].values,
+        names=analysis_results['emotion_counts'].index,
+        title=f"Emotion Distribution - {analysis_results['poi_info']['POI_Name']}",
+        color_discrete_sequence=px.colors.qualitative.Bold,
+        hole=0.3
+    )
+    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+    charts.append(fig_pie)
+    
+    # 2. Emotion Bar Chart
+    fig_bar = px.bar(
+        x=analysis_results['emotion_counts'].index,
+        y=analysis_results['emotion_counts'].values,
+        title="Emotion Frequency Count",
+        labels={'x': 'Emotion Type', 'y': 'Count'},
+        color=analysis_results['emotion_counts'].values,
+        color_continuous_scale='Reds'
+    )
+    charts.append(fig_bar)
+    
+    # 3. Temporal Evolution (if available)
+    if analysis_results['temporal_emotions'] is not None:
+        fig_temporal = px.line(
+            analysis_results['temporal_emotions'],
+            title="Emotion Evolution Over March Phases",
+            markers=True,
+            labels={'value': 'Emotion Count', 'variable': 'Emotion Type'}
+        )
+        fig_temporal.update_layout(hovermode='x unified')
+        charts.append(fig_temporal)
+    
+    # 4. Sentiment Distribution
+    if analysis_results['avg_sentiment'] is not None:
+        fig_sent = go.Figure()
+        fig_sent.add_trace(go.Histogram(
+            x=analysis_results['data']['sentiment_score'],
+            nbinsx=30,
+            name='Sentiment Distribution',
+            marker_color='indianred'
+        ))
+        fig_sent.add_vline(
+            x=analysis_results['avg_sentiment'],
+            line_dash="dash",
+            line_color="darkred",
+            annotation_text=f"Mean: {analysis_results['avg_sentiment']:.3f}"
+        )
+        fig_sent.update_layout(
+            title="Sentiment Score Distribution",
+            xaxis_title="Sentiment Score",
+            yaxis_title="Frequency",
+            showlegend=False
+        )
+        charts.append(fig_sent)
+    
+    return charts
 
-def create_emotion_distribution(df):
-    """Chart 1: Emotion Distribution"""
-    df_filtered = df[df['march_number'].isin([1, 2, 3])].copy()
-    
-    if len(df_filtered) == 0:
-        return None
-    
-    march_labels = {1: 'First March', 2: 'Second March', 3: 'Third March'}
-    df_filtered['march_phase'] = df_filtered['march_number'].map(march_labels)
-    
-    phase_emotion = df_filtered.groupby(['march_phase', 'dominant_emotion']).size().reset_index(name='count')
-    
-    fig = px.bar(phase_emotion, x='march_phase', y='count',
-                 color='dominant_emotion',
-                 title='Emotion Distribution by March Phase',
-                 color_discrete_map=INSIDE_OUT_COLORS)
-    
-    fig.update_layout(height=400, xaxis_tickangle=-45)
-    return fig
-
-def create_emotion_boxplot(df):
-    """Chart 2: Emotion Boxplot"""
-    emotion_cols = [col for col in df.columns if col.endswith('_score')]
-    
-    plot_data = []
-    for col in emotion_cols:
-        emotion_name = col.replace('_score', '').capitalize()
-        values = df[col].dropna().values
-        plot_data.extend([{'Emotion': emotion_name, 'Score': val} 
-                         for val in values if val > 0])
-    
-    if len(plot_data) == 0:
-        return None
-    
-    plot_df = pd.DataFrame(plot_data)
-    color_map = {e.capitalize(): INSIDE_OUT_COLORS.get(e, '#95A5A6') for e in INSIDE_OUT_COLORS.keys()}
-    
-    fig = px.box(plot_df, x='Emotion', y='Score',
-                 title='Emotion Score Distribution',
-                 color='Emotion', color_discrete_map=color_map)
-    
-    fig.update_layout(height=400, showlegend=False, xaxis_tickangle=-45)
-    return fig
-
-def create_scatter(df):
-    """Chart 3: Emotion vs Sentiment"""
-    fig = px.scatter(df, x='emotion_intensity', y='sentiment_polarity',
-                    color='dominant_emotion', hover_data=['location_name'],
-                    title='Emotion Score vs Sentiment Polarity',
-                    color_discrete_map=INSIDE_OUT_COLORS)
-    
-    fig.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig.update_layout(height=400)
-    return fig
-
-def create_distance_decay(df):
-    """Chart 4: Distance Decay"""
-    fear_data = df[(df['dominant_emotion'] == 'fear') & (df['distance_from_start_km'] > 0)]
-    
-    if len(fear_data) < 3:
-        fear_data = df[df['distance_from_start_km'] > 0]
-        if len(fear_data) == 0:
-            return None
-        
-        fig = px.scatter(fear_data, x='distance_from_start_km', y='emotion_intensity',
-                        color='dominant_emotion', color_discrete_map=INSIDE_OUT_COLORS,
-                        hover_data=['location_name'],
-                        title='Distance Decay: All Emotions')
-    else:
-        fig = px.scatter(fear_data, x='distance_from_start_km', y='emotion_intensity',
-                        hover_data=['location_name'],
-                        color_discrete_sequence=[INSIDE_OUT_COLORS['fear']],
-                        title='Distance Decay: Fear Emotion')
-    
-    fig.update_layout(height=400)
-    return fig
-
-def create_avg_by_phase(df):
-    """Chart 5: Average by Phase"""
-    df_filtered = df[df['march_number'].isin([1, 2, 3])].copy()
-    
-    if len(df_filtered) == 0:
-        return None
-    
-    march_labels = {1: 'First March', 2: 'Second March', 3: 'Third March'}
-    df_filtered['march_phase'] = df_filtered['march_number'].map(march_labels)
-    
-    phase_avg = df_filtered.groupby('march_phase')['emotion_intensity'].mean().reset_index()
-    
-    fig = px.bar(phase_avg, x='march_phase', y='emotion_intensity',
-                title='Avg Emotion Intensity by March Phase',
-                color_discrete_sequence=['#FA8072'])
-    
-    fig.update_layout(height=400, xaxis_tickangle=-45)
-    return fig
-
-# ============================================================================
-# MAIN APP
-# ============================================================================
-
+# ==================== MAIN APP ====================
 def main():
-    # WWII Historical Theme CSS
+    # Apply CSS theme
     st.markdown("""
     <style>
-    /* WWII Historical Color Palette */
-    :root {
-        --wwii-olive: #4A5D3F;
-        --wwii-khaki: #C3B091;
-        --wwii-brown: #3E2723;
-        --wwii-tan: #D7CCC8;
-        --wwii-gray: #5D4E37;
-        --wwii-red: #8B0000;
-        --wwii-gold: #B8860B;
-    }
-    
-    /* Main background - aged paper/military map */
     .main {
-        background: linear-gradient(135deg, #E8DCC4 0%, #D4C5A9 50%, #C3B091 100%);
+        background-color: #E8DCC4;
     }
-    
-    /* Header - Military Style */
-    .main-header {
-        text-align: center;
-        padding: 25px;
-        background: linear-gradient(135deg, #3E2723 0%, #5D4E37 100%);
-        color: #E8DCC4;
-        border-radius: 8px;
-        margin-bottom: 30px;
-        border: 3px solid #8B7355;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-        font-family: 'Courier New', monospace;
-    }
-    
-    .main-header h1 {
-        color: #FFD700 !important;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        font-weight: bold;
-        letter-spacing: 1px;
-    }
-    
-    .main-header h3 {
-        color: #D7CCC8 !important;
-        font-weight: 400;
-    }
-    
-    .main-header p {
-        color: #C3B091 !important;
-        font-style: italic;
-    }
-    
-    /* Info Box - Military Briefing Style */
-    .info-box {
-        background: linear-gradient(135deg, #4A5D3F 0%, #5D4E37 100%);
-        padding: 25px;
-        border-radius: 8px;
-        border-left: 6px solid #8B0000;
-        border-right: 2px solid #8B7355;
-        margin-bottom: 25px;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.3);
-        color: #E8DCC4;
-    }
-    
-    .info-box h4 {
-        color: #FFD700 !important;
-        margin-bottom: 15px;
-        font-weight: bold;
-        font-family: 'Courier New', monospace;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-    }
-    
-    .info-box p {
-        color: #E8DCC4 !important;
-        line-height: 1.6;
-    }
-    
-    .info-box strong {
-        color: #FFD700 !important;
-    }
-    
-    /* Metric Cards - War Report Style */
     .stMetric {
-        background: linear-gradient(135deg, #2C1810 0%, #3E2723 100%) !important;
-        padding: 20px !important;
-        border-radius: 8px !important;
-        border: 2px solid #8B7355 !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.4) !important;
-    }
-    
-    .stMetric label {
-        color: #D7CCC8 !important;
-        font-weight: bold !important;
-        font-size: 14px !important;
-        font-family: 'Courier New', monospace !important;
-    }
-    
-    .stMetric [data-testid="stMetricValue"] {
-        color: #FFD700 !important;
-        font-size: 28px !important;
-        font-weight: bold !important;
-        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-    }
-    
-    /* Sidebar - Command Post Style */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #3E2723 0%, #2C1810 100%);
-        border-right: 3px solid #8B7355;
-    }
-    
-    section[data-testid="stSidebar"] * {
-        color: #E8DCC4 !important;
-    }
-    
-    /* Charts - Darker background for visibility */
-    .js-plotly-plot {
-        background: rgba(255, 255, 255, 0.95) !important;
+        background: linear-gradient(135deg, #2C1810 0%, #3E2723 100%);
+        padding: 15px;
         border-radius: 8px;
         border: 2px solid #8B7355;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    }
-    
-    /* Markdown Tables */
-    table {
-        background: #2C1810 !important;
-        color: #E8DCC4 !important;
-        border: 2px solid #8B7355 !important;
-    }
-    
-    table th {
-        background: #3E2723 !important;
         color: #FFD700 !important;
-        font-family: 'Courier New', monospace !important;
-        font-weight: bold !important;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    table td {
-        color: #E8DCC4 !important;
-        border-color: #5D4E37 !important;
-    }
-    
-    /* Horizontal Rule - Military Division */
-    hr {
-        border: none;
-        height: 3px;
-        background: linear-gradient(90deg, 
-            transparent 0%, 
-            #8B0000 20%, 
-            #FFD700 50%, 
-            #8B0000 80%, 
-            transparent 100%);
-        margin: 30px 0;
-    }
-    
-    /* Text Colors for White Boxes */
-    .element-container {
-        color: #2C1810 !important;
-    }
-    
-    /* Fix white text in white boxes */
-    div[data-testid="stMarkdownContainer"] p {
-        color: #2C1810 !important;
-    }
-    
-    /* Headers in content */
-    h1, h2, h3, h4, h5, h6 {
-        color: #3E2723 !important;
-        font-family: 'Courier New', monospace !important;
-    }
-    
-    /* Buttons - Military Style */
-    .stButton button {
-        background: linear-gradient(135deg, #4A5D3F 0%, #5D4E37 100%);
-        color: #FFD700 !important;
-        border: 2px solid #8B7355;
-        font-weight: bold;
-        font-family: 'Courier New', monospace;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    .stButton button:hover {
-        background: linear-gradient(135deg, #5D4E37 0%, #4A5D3F 100%);
-        border-color: #FFD700;
-    }
-    
-    /* Scrollbar */
-    ::-webkit-scrollbar {
-        width: 12px;
-        background: #2C1810;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: #5D4E37;
-        border: 2px solid #8B7355;
-        border-radius: 6px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: #4A5D3F;
-    }
-    
-    /* Footer styling */
-    footer {
-        background: #2C1810;
-        color: #C3B091 !important;
-        border-top: 3px solid #8B7355;
-        padding: 20px;
-        font-family: 'Courier New', monospace;
     }
     </style>
     """, unsafe_allow_html=True)
-
+    
     # Header
     st.markdown("""
-    <div class="main-header">
-        <h1>🎖️ STATISTICAL SPATIAL ANALYSIS: SANDAKAN-RANAU DEATH MARCHES 🎖️</h1>
-        <h3>⚔️ Enhanced with Hybrid Emotion Detection (BERT + Lexicon) ⚔️</h3>
-        <p>🗺️ Research Objective 2: Analyze spatial-temporal sentiment patterns during WWII Pacific Theater operations</p>
+    <div style="text-align: center; padding: 25px; 
+                background: linear-gradient(135deg, #3E2723 0%, #5D4E37 100%); 
+                color: #E8DCC4; border-radius: 10px; margin-bottom: 30px;
+                border: 3px solid #8B7355; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+        <h1 style="color: #FFD700; font-family: 'Courier New', monospace; text-shadow: 2px 2px 4px rgba(0,0,0,0.5);">
+            🎖️ SANDAKAN-RANAU DEATH MARCHES: SPATIAL-EMOTION ANALYSIS 🎖️
+        </h1>
+        <h3 style="color: #D7CCC8; font-weight: 400;">
+            ⚔️ Interactive 4D Geovisualization (X, Y, T + Emotion) ⚔️
+        </h3>
+        <p style="color: #C3B091; font-style: italic;">
+            🗺️ Research Objective 3: Interactive GIS storytelling with synchronized spatial-temporal-emotional analysis
+        </p>
     </div>
     """, unsafe_allow_html=True)
-
-    # Load data
-    with st.spinner('Loading emotion analysis data...'):
-        df = load_data()
     
-    if df.empty:
-        st.error("❌ Could not load data. Please check data files.")
+    # Load data
+    with st.spinner("🔄 Loading emotion data and spatial layers..."):
+        hybrid_df, location_df = load_data()
+        poi_gdf, route1_gdf, route2_gdf, route3_gdf = load_spatial_data()
+    
+    if poi_gdf is None or hybrid_df is None:
+        st.error("⚠️ Failed to load required data. Please check file paths.")
         return
     
-    # Get statistics
-    summary = get_statistical_summary(df)
+    # Create layout
+    col_map, col_analysis = st.columns([1.3, 1])
     
-    # Info box
-    st.markdown("""
-    <div class="info-box">
-        <h4>📋 Intelligence Report: Methodology & Dataset</h4>
-        <p><strong>🔍 Data Source:</strong> Step 5 Hybrid Emotion Analysis (BERT Transformer + Lexicon-based detection)</p>
-        <p><strong>🤖 Detection Method:</strong> Advanced NLP with 417% improvement over traditional approaches</p>
-        <p><strong>📊 Intelligence Gathered:</strong> 1,831 emotions detected across 174 geographic locations</p>
-        <p><strong>⚠️ Historical Period:</strong> January - June 1945 | Borneo Campaign | WWII Pacific Theater</p>
-    </div>
-    """, unsafe_allow_html=True)
+    with col_map:
+        st.subheader("🗺️ Interactive Death March Route Map")
+        st.markdown("*Click on POI markers to view detailed emotion analysis →*")
+        
+        # Create and display map
+        death_march_map = create_interactive_map(
+            poi_gdf, route1_gdf, route2_gdf, route3_gdf, hybrid_df
+        )
+        
+        # Display map with interaction
+        map_data = st_folium(
+            death_march_map,
+            width=None,
+            height=650,
+            returned_objects=["last_object_clicked"]
+        )
+        
+        # Detect clicked location
+        clicked_location = None
+        if map_data and map_data.get("last_object_clicked"):
+            clicked_coords = map_data["last_object_clicked"]
+            clicked_point = gpd.points_from_xy([clicked_coords['lng']], [clicked_coords['lat']])[0]
+            distances = poi_gdf.geometry.distance(clicked_point)
+            nearest_idx = distances.idxmin()
+            clicked_location = poi_gdf.iloc[nearest_idx]['POI_Name']
     
-    # Key metrics
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("📚 Total Records", f"{summary['Total Emotion Records']:,}")
-    with col2:
-        st.metric("📍 Unique Locations", summary['Unique POI Locations'])
-    with col3:
-        st.metric("🧮 Moran's I", summary["Moran's I"])
-    with col4:
-        st.metric("📊 Correlation", summary['Emotion-Sentiment Corr'])
-    with col5:
-        st.metric("😢 Dominant Emotion", summary['Dominant Emotion'])
-    
-    st.markdown("---")
-    
-    # Charts in 3x2 grid
-    st.subheader("📈 Statistical Visualizations")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        fig1 = create_emotion_distribution(df)
-        if fig1:
-            st.plotly_chart(fig1, use_container_width=True)
-    
-    with col2:
-        fig2 = create_emotion_boxplot(df)
-        if fig2:
-            st.plotly_chart(fig2, use_container_width=True)
-    
-    with col3:
-        fig3 = create_scatter(df)
-        if fig3:
-            st.plotly_chart(fig3, use_container_width=True)
-    
-    col4, col5, col6 = st.columns(3)
-    
-    with col4:
-        fig4 = create_distance_decay(df)
-        if fig4:
-            st.plotly_chart(fig4, use_container_width=True)
-    
-    with col5:
-        fig5 = create_avg_by_phase(df)
-        if fig5:
-            st.plotly_chart(fig5, use_container_width=True)
-    
-    with col6:
-        st.markdown("### 📋 Statistical Summary")
-        st.markdown(f"""
-        | Metric | Value |
-        |--------|-------|
-        | Total Records | {summary['Total Emotion Records']} |
-        | Unique Locations | {summary['Unique POI Locations']} |
-        | Moran's I | {summary["Moran's I"]} |
-        | Interpretation | {summary['Interpretation']} |
-        | Avg Emotion Score | {summary['Avg Emotion Score']} |
-        | Avg Sentiment | {summary['Avg Sentiment Polarity']} |
-        | Correlation | {summary['Emotion-Sentiment Corr']} |
-        | P-value | {summary['Correlation P-value']} |
-        | Dominant Emotion | {summary['Dominant Emotion']} |
-        """)
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("""
-    <div style='text-align: center; color: #7f8c8d;'>
-        <p><strong>🎓 Sandakan-Ranau Death Marches Emotion Mapping Project</strong></p>
-        <p>GES722 Geospatial Research | Python 3.13 | spaCy 3.8.7 | Transformers 4.49.0 | Streamlit</p>
-        <p><em>✨ Deployed on Streamlit Community Cloud</em></p>
-    </div>
-    """, unsafe_allow_html=True)
+    with col_analysis:
+        st.subheader("📊 Location-Specific Emotion Analysis")
+        
+        # Location selector
+        location_options = sorted(poi_gdf['POI_Name'].unique())
+        
+        if clicked_location and clicked_location in location_options:
+            default_idx = location_options.index(clicked_location)
+        else:
+            default_idx = 0
+        
+        selected_location = st.selectbox(
+            "🎯 Select Location:",
+            options=location_options,
+            index=default_idx,
+            help="Click map markers or select from dropdown"
+        )
+        
+        if selected_location:
+            poi_row = poi_gdf[poi_gdf['POI_Name'] == selected_location].iloc[0]
+            
+            # Display POI info
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("💀 Deaths", int(poi_row.get('size_M1', 0)))
+            with col2:
+                st.metric("🗓️ Month", poi_row.get('Base_month', 'N/A'))
+            with col3:
+                st.metric("🎖️ March", poi_row['march_name'])
+            
+            # Analyze emotions
+            analysis = analyze_location_emotions(selected_location, hybrid_df, poi_row)
+            
+            if analysis and analysis['total_records'] > 0:
+                st.metric("📝 Emotion Records", analysis['total_records'])
+                
+                if analysis['avg_sentiment'] is not None:
+                    st.metric("💭 Avg Sentiment", f"{analysis['avg_sentiment']:.3f}")
+                
+                # Display charts
+                charts = create_location_charts(analysis)
+                for chart in charts:
+                    st.plotly_chart(chart, use_container_width=True)
+                
+                # Raw data expander
+                with st.expander("📄 View Raw Emotion Data"):
+                    st.dataframe(analysis['data'][['location', 'sentence', 'dominant_emotion', 'sentiment_score']], use_container_width=True)
+            else:
+                st.warning(f"⚠️ No emotion data available for **{selected_location}**")
+                st.info("This location exists in spatial data but no matching records found in emotion analysis.")
 
 if __name__ == "__main__":
     main()
-
-
-
