@@ -238,11 +238,11 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
                 <strong>📅 Month:</strong> {base_month}<br>
                 <strong>🔢 Segment:</strong> {row.get('segment', 'N/A')}
             </div>
-            
+                        
             <div style="background: #2C1810; color: #FFD700; padding: 8px; border-radius: 3px; margin: 8px 0;">
-                <strong>💀 POW Deaths:</strong> {int(death_count)}<br>
-                <strong>📊 Emotion Records:</strong> {total_emotions}<br>
-                <strong>😔 Dominant:</strong> <span style="color: {marker_color}; text-transform: uppercase; font-weight: bold;">{dominant_emotion}</span>
+                <strong>POW Deaths:</strong> {int(death_count)}<br>
+                <strong>Emotion Records:</strong> {total_emotions}<br>
+                <strong>Dominant Emotion:</strong> <span style="color: {marker_color}; text-transform: uppercase; font-weight: bold;">{dominant_emotion}</span>
             </div>
             
             <div style="background: #5D4E37; color: #C3B091; padding: 6px; border-radius: 3px; font-size: 10px;">
@@ -553,4 +553,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
