@@ -89,104 +89,74 @@ def load_spatial_data():
         return None, None, None, None
 
 # ==================== SMART COLUMN DETECTION ====================
+# Light-weight cached version (column names only)
 @st.cache_data
-def analyze_data_structure(emotion_df, poi_gdf):
-    """
-    Automatically analyze data structure and identify matching columns
-    Returns a mapping dictionary for column names
-    """
-    analysis_results = {
-        'emotion_columns': list(emotion_df.columns),
-        'spatial_columns': list(poi_gdf.columns),
+def get_column_mappings(emotion_cols, spatial_cols):
+    """Cached mapping logic using only column names"""
+    mapping = {
+        'emotion_columns': emotion_cols,
+        'spatial_columns': spatial_cols,
         'location_column': None,
         'poi_name_column': None,
         'death_count_column': None,
         'emotion_score_columns': [],
         'sentiment_column': None,
-        'temporal_column': None,
-        'sample_locations': []
+        'temporal_column': None
     }
     
-    # 1. Find POI name column in spatial data
-    poi_name_candidates = ['POI_Name', 'poi_name', 'name', 'Name', 'location_name', 'place_name']
-    for col in poi_name_candidates:
-        if col in poi_gdf.columns:
-            analysis_results['poi_name_column'] = col
-            # Get sample location names
-            analysis_results['sample_locations'] = poi_gdf[col].dropna().unique()[:5].tolist()
+    # POI name detection
+    for col in ['POI_Name', 'poi_name', 'name', 'Name']:
+        if col in spatial_cols:
+            mapping['poi_name_column'] = col
             break
     
-    # 2. Find death count column in spatial data
-    death_count_candidates = ['size_M1', 'deaths', 'death_count', 'casualties', 'pow_deaths']
-    for col in death_count_candidates:
-        if col in poi_gdf.columns:
-            analysis_results['death_count_column'] = col
+    # Death count detection
+    for col in ['size_M1', 'deaths', 'death_count']:
+        if col in spatial_cols:
+            mapping['death_count_column'] = col
             break
     
-    # 3. Find location column in emotion data (smart matching)
-    location_candidates = [
-        'location', 'Location', 'poi_name', 'POI_Name', 'place', 'Place',
-        'name', 'Name', 'entity_text', 'text', 'entity', 'named_entity',
-        'location_text', 'location_name', 'place_name'
-    ]
-    
-    # First: Try exact matches
-    for col in location_candidates:
-        if col in emotion_df.columns:
-            analysis_results['location_column'] = col
+    # Location column detection
+    for col in ['location', 'Location', 'entity_text', 'poi_name']:
+        if col in emotion_cols:
+            mapping['location_column'] = col
             break
     
-    # Second: Try fuzzy matching - find any column containing location-like text
-    if analysis_results['location_column'] is None:
-        for col in emotion_df.columns:
-            col_lower = col.lower()
-            if any(keyword in col_lower for keyword in ['location', 'place', 'poi', 'entity', 'site']):
-                # Verify it contains text data
-                if emotion_df[col].dtype == 'object':
-                    analysis_results['location_column'] = col
-                    break
+    # Emotion columns
+    for col in emotion_cols:
+        if any(kw in col.lower() for kw in ['anger', 'fear', 'sadness', 'joy']):
+            mapping['emotion_score_columns'].append(col)
     
-    # Third: Smart content-based detection
-    if analysis_results['location_column'] is None and len(analysis_results['sample_locations']) > 0:
-        # Check which column contains the most matches with POI names
-        sample_poi = analysis_results['sample_locations'][0].split()[0]  # First word of first location
-        
-        for col in emotion_df.columns:
-            if emotion_df[col].dtype == 'object':
-                # Check if this column contains location names
-                try:
-                    matches = emotion_df[col].str.contains(sample_poi, case=False, na=False).sum()
-                    if matches > 0:
-                        analysis_results['location_column'] = col
-                        break
-                except:
-                    continue
-    
-    # 4. Find emotion score columns
-    emotion_keywords = ['anger', 'fear', 'sadness', 'joy', 'surprise', 'disgust', 
-                       'neutral', 'hunger', 'despair', 'cruelty', 'emotion']
-    for col in emotion_df.columns:
-        if any(keyword in col.lower() for keyword in emotion_keywords):
-            # Check if it's numeric
-            if pd.api.types.is_numeric_dtype(emotion_df[col]):
-                analysis_results['emotion_score_columns'].append(col)
-    
-    # 5. Find sentiment column
-    sentiment_candidates = ['sentiment', 'sentiment_score', 'sentiment_value', 'polarity']
-    for col in sentiment_candidates:
-        if col in emotion_df.columns:
-            if pd.api.types.is_numeric_dtype(emotion_df[col]):
-                analysis_results['sentiment_column'] = col
-                break
-    
-    # 6. Find temporal column
-    temporal_candidates = ['march_phase', 'date', 'time', 'period', 'phase', 'month', 'day']
-    for col in temporal_candidates:
-        if col in emotion_df.columns:
-            analysis_results['temporal_column'] = col
+    # Sentiment column
+    for col in ['sentiment', 'sentiment_score']:
+        if col in emotion_cols:
+            mapping['sentiment_column'] = col
             break
     
-    return analysis_results
+    # Temporal column
+    for col in ['march_phase', 'date', 'time']:
+        if col in emotion_cols:
+            mapping['temporal_column'] = col
+            break
+    
+    return mapping
+
+# Non-cached wrapper that enriches with actual data
+def analyze_data_structure(emotion_df, poi_gdf):
+    """Wrapper that adds runtime data to cached mappings"""
+    # Get cached column mappings
+    mapping = get_column_mappings(
+        list(emotion_df.columns),
+        list(poi_gdf.columns)
+    )
+    
+    # Add sample locations (not cached)
+    if mapping['poi_name_column']:
+        mapping['sample_locations'] = poi_gdf[mapping['poi_name_column']].dropna().unique()[:5].tolist()
+    else:
+        mapping['sample_locations'] = []
+    
+    return mapping
 
 def display_data_analysis(analysis_results):
     """Display the automatic data structure analysis results"""
@@ -728,3 +698,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
