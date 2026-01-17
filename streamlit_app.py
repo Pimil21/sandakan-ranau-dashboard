@@ -177,7 +177,7 @@ def create_interactive_map(poi_gdf, route1_gdf, route2_gdf, route3_gdf, emotion_
     for idx, row in poi_gdf.iterrows():
         poi_name = row['POI_Name']
         march_name = row['march_name']
-        death_count = row.get('size_M1', 0)
+        death_count = row.get('size_M1', 0) if pd.notna(row.get('size_M1')) else 0
         
         # Handle NaN values
         if pd.isna(death_count):
@@ -552,4 +552,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
