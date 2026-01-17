@@ -47,15 +47,45 @@ def load_data():
         return None, None
 
 @st.cache_data
+@st.cache_data
 def load_spatial_data():
-    """Load shapefiles and convert to GeoDataFrames"""
+    """Load shapefiles with 2D geometry extraction"""
     try:
-        # Load POI locations for all three marches
-        poi_m1 = gpd.read_file(Config.POI_M1)
-        poi_m2 = gpd.read_file(Config.POI_M2)
-        poi_m3 = gpd.read_file(Config.POI_M3)
+        import fiona
+        from shapely.geometry import shape, Point, mapping
         
-        # Add march identifier
+        def read_as_2d(filepath):
+            """Read shapefile and force 2D geometry"""
+            features = []
+            with fiona.open(filepath) as src:
+                for feature in src:
+                    # Get properties
+                    props = feature['properties']
+                    
+                    # Get geometry and force 2D
+                    geom = shape(feature['geometry'])
+                    
+                    # Convert to 2D
+                    if hasattr(geom, 'coords'):
+                        # Point or LineString
+                        coords_2d = [(x, y) for x, y, *z in geom.coords] if geom.has_z else list(geom.coords)
+                        if geom.geom_type == 'Point':
+                            geom_2d = Point(coords_2d[0])
+                        else:
+                            geom_2d = type(geom)(coords_2d)
+                    else:
+                        geom_2d = geom
+                    
+                    features.append({'geometry': geom_2d, **props})
+            
+            return gpd.GeoDataFrame(features, crs='EPSG:4326')
+        
+        # Load POIs
+        poi_m1 = read_as_2d(Config.POI_M1)
+        poi_m2 = read_as_2d(Config.POI_M2)
+        poi_m3 = read_as_2d(Config.POI_M3)
+        
+        # Add march info
         poi_m1['march_id'] = 1
         poi_m2['march_id'] = 2
         poi_m3['march_id'] = 3
@@ -64,26 +94,20 @@ def load_spatial_data():
         poi_m2['march_name'] = 'Second March'
         poi_m3['march_name'] = 'Third March'
         
-        # Combine all POIs
+        # Combine
         poi_gdf = pd.concat([poi_m1, poi_m2, poi_m3], ignore_index=True)
         
-        # Load route lines
-        route1_gdf = gpd.read_file(Config.ROUTE1)
-        route2_gdf = gpd.read_file(Config.ROUTE2)
-        route3_gdf = gpd.read_file(Config.ROUTE3)
+        # Load routes
+        route1_gdf = read_as_2d(Config.ROUTE1)
+        route2_gdf = read_as_2d(Config.ROUTE2)
+        route3_gdf = read_as_2d(Config.ROUTE3)
         
-        # Ensure WGS84 projection
-        poi_gdf = poi_gdf.to_crs(epsg=4326)
-        route1_gdf = route1_gdf.to_crs(epsg=4326)
-        route2_gdf = route2_gdf.to_crs(epsg=4326)
-        route3_gdf = route3_gdf.to_crs(epsg=4326)
-        
-        st.success(f"✅ Loaded {len(poi_gdf)} POI locations across 3 death marches")
+        st.success(f"✅ Loaded {len(poi_gdf)} POI locations (3D → 2D)")
         
         return poi_gdf, route1_gdf, route2_gdf, route3_gdf
         
     except Exception as e:
-        st.error(f"⚠️ Error loading spatial data: {str(e)}")
+        st.error(f"⚠️ Error: {str(e)}")
         return None, None, None, None
 
 # ==================== MAP CREATION ====================
@@ -535,4 +559,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
