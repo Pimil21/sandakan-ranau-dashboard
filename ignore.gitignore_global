@@ -1,0 +1,20 @@
+# .gitignore
+# Ignore all data directories
+data/
+outputs/
+spatial_data/
+
+# Ignore specific file types that might contain book text
+*.csv
+*.json
+*.pdf
+*.txt
+*.xlsx
+*.shp
+*.shx
+*.dbf
+
+# Ignore system files
+__pycache__/
+.DS_Store
+.env
