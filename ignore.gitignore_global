@@ -3,6 +3,8 @@
 data/
 outputs/
 spatial_data/
+2d-spatial-data/
+3d-spatial-data/
 
 # Ignore specific file types that might contain book text
 *.csv
@@ -17,4 +19,5 @@ spatial_data/
 # Ignore system files
 __pycache__/
 .DS_Store
+
 .env
